@@ -1,0 +1,4661 @@
+<!DOCTYPE html>
+<!--
+  SoloDB Manager — single-file vanilla JS frontend (HTML + CSS + JS in one file).
+  Served as a static index.html by the C# ASP.NET Core AOT backend.
+  Provides a complete GUI for browsing/querying/editing SoloDB collections
+  (JSON documents stored as JSONB in SQLite) and plain SQLite tables.
+  No external dependencies, no build step, no CDN. Modern Chromium only.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SoloDB Manager</title>
+  <style>
+    /* ============================================================
+       Theme tokens — light + dark via CSS custom properties.
+       Emerald/teal accent for SoloDB, sky/teal for regular tables,
+       amber for SoloDB internal tables. NO indigo/blue.
+       ============================================================ */
+    :root {
+      --bg: #ffffff;
+      --bg-elev: #f8fafc;
+      --bg-elev-2: #f1f5f9;
+      --bg-hover: #f1f5f9;
+      --surface: #ffffff;
+      --surface-2: #fafafa;
+      --border: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --text-faint: #94a3b8;
+
+      --accent: #10b981;        /* emerald-500 */
+      --accent-fg: #ffffff;
+      --accent-soft: #d1fae5;   /* emerald-100 */
+      --accent-strong: #047857; /* emerald-700 */
+
+      --teal: #0d9488;          /* teal-600 */
+      --teal-soft: #ccfbf1;
+      --sky: #0284c7;           /* sky-600 */
+      --sky-soft: #e0f2fe;
+      --amber: #d97706;         /* amber-600 */
+      --amber-soft: #fef3c7;
+      --rose: #e11d48;
+      --rose-soft: #ffe4e6;
+      --purple: #9333ea;
+      --purple-soft: #f3e8ff;
+
+      --header-h: 56px;
+      --footer-h: 28px;
+      --sidebar-w: 256px;
+
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+      --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+      --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.16);
+      --ring: 0 0 0 2px var(--accent);
+
+      --radius: 8px;
+      --radius-sm: 6px;
+      --radius-lg: 12px;
+
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+      --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas,
+        "Liberation Mono", monospace;
+    }
+    [data-theme="dark"] {
+      --bg: #0b1120;
+      --bg-elev: #0f172a;
+      --bg-elev-2: #1e293b;
+      --bg-hover: #1e293b;
+      --surface: #0f172a;
+      --surface-2: #131c31;
+      --border: #1e293b;
+      --border-strong: #334155;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --text-faint: #64748b;
+
+      --accent: #10b981;
+      --accent-fg: #04130d;
+      --accent-soft: #064e3b;
+      --accent-strong: #6ee7b7;
+
+      --teal: #2dd4bf;
+      --teal-soft: #134e4a;
+      --sky: #38bdf8;
+      --sky-soft: #0c4a6e;
+      --amber: #fbbf24;
+      --amber-soft: #78350f;
+      --rose: #fb7185;
+      --rose-soft: #4c0519;
+      --purple: #c084fc;
+      --purple-soft: #3b0764;
+
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+      --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+    }
+
+    /* ============================================================
+       Reset & base
+       ============================================================ */
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; background: none; border: none; padding: 0; }
+    a { color: var(--accent-strong); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    ::selection { background: var(--accent-soft); color: var(--text); }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-strong);
+      border-radius: 5px;
+      border: 2px solid var(--bg);
+    }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+
+    /* ============================================================
+       App layout — top bar + sidebar + content + status bar
+       ============================================================ */
+    #app {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+    }
+
+    .topbar {
+      height: var(--header-h);
+      flex: 0 0 var(--header-h);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      z-index: 20;
+    }
+    .topbar .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .topbar .brand .logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      background: linear-gradient(135deg, var(--accent), var(--teal));
+      display: grid;
+      place-items: center;
+      color: white;
+      font-weight: 800;
+      font-size: 14px;
+      letter-spacing: -0.5px;
+      box-shadow: var(--shadow-sm);
+    }
+    .topbar .db-summary {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+      height: 32px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      font-size: 13px;
+      min-width: 0;
+    }
+    .topbar .db-summary .name {
+      font-weight: 600;
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .topbar .db-summary .stats {
+      color: var(--text-muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .topbar .spacer { flex: 1; }
+    .topbar .actions { display: flex; align-items: center; gap: 6px; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+    .badge-solodb { background: var(--accent-soft); color: var(--accent-strong); }
+    .badge-sqlite { background: var(--sky-soft); color: var(--sky); }
+    .badge-internal { background: var(--amber-soft); color: var(--amber); }
+    .badge-regular { background: var(--sky-soft); color: var(--sky); }
+    .badge-collection { background: var(--accent-soft); color: var(--accent-strong); }
+    .badge-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.12s, border-color 0.12s, transform 0.05s;
+      white-space: nowrap;
+    }
+    .btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+    .btn:active { transform: translateY(1px); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary {
+      background: var(--accent);
+      color: var(--accent-fg);
+      border-color: var(--accent);
+    }
+    .btn-primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+    .btn-ghost { background: transparent; border-color: transparent; }
+    .btn-ghost:hover { background: var(--bg-hover); border-color: var(--border); }
+    .btn-icon { width: 32px; padding: 0; justify-content: center; }
+    .btn-sm { height: 28px; padding: 0 8px; font-size: 12px; }
+    .btn-danger { color: var(--rose); border-color: var(--border); }
+    .btn-danger:hover { background: var(--rose-soft); border-color: var(--rose); }
+
+    /* Main layout */
+    .main {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-w);
+      flex: 0 0 var(--sidebar-w);
+      border-right: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .sidebar-head {
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .search-input {
+      width: 100%;
+      height: 32px;
+      padding: 0 10px 0 32px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-elev);
+      color: var(--text);
+      font-size: 13px;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>");
+      background-repeat: no-repeat;
+      background-position: 10px center;
+    }
+    .search-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+
+    .sidebar-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      min-height: 0;
+    }
+    .sidebar-section { margin-bottom: 4px; }
+    .sidebar-section-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+      user-select: none;
+    }
+    .sidebar-section-head:hover { background: var(--bg-hover); }
+    .sidebar-section-head .chevron { transition: transform 0.15s; display: inline-flex; }
+    .sidebar-section.collapsed .chevron { transform: rotate(-90deg); }
+    .sidebar-section.collapsed .sidebar-section-body { display: none; }
+    .sidebar-section-head .count {
+      margin-left: auto;
+      color: var(--text-faint);
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .sidebar-section-body { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; }
+    .sidebar-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px 6px 28px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      color: var(--text);
+      cursor: pointer;
+      position: relative;
+      min-height: 30px;
+    }
+    .sidebar-item:hover { background: var(--bg-hover); }
+    .sidebar-item.active {
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+      font-weight: 600;
+    }
+    .sidebar-item .icon {
+      width: 8px; height: 8px; border-radius: 2px; flex: 0 0 8px;
+      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    }
+    .sidebar-item .name {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .sidebar-item .rowcount {
+      font-size: 11px;
+      color: var(--text-faint);
+      background: var(--bg-elev);
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-variant-numeric: tabular-nums;
+    }
+    .sidebar-item.active .rowcount { background: rgba(255,255,255,0.4); color: var(--accent-strong); }
+    [data-theme="dark"] .sidebar-item.active .rowcount { background: rgba(0,0,0,0.3); }
+
+    .icon-collection { background: var(--accent); }
+    .icon-regular { background: var(--sky); }
+    .icon-internal { background: var(--amber); }
+
+    .sidebar-empty {
+      padding: 16px 12px;
+      color: var(--text-faint);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    /* Content area */
+    .content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      background: var(--bg);
+    }
+    .tabbar {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex: 0 0 auto;
+      min-height: 40px;
+    }
+    .tab {
+      padding: 8px 14px;
+      font-size: 13px;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      font-weight: 500;
+      transition: color 0.12s, border-color 0.12s;
+      margin-bottom: -1px;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent-strong); border-bottom-color: var(--accent); }
+    .tab.disabled { color: var(--text-faint); cursor: not-allowed; }
+    .tab.disabled:hover { color: var(--text-faint); }
+
+    .tab-panel {
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .tab-panel.hidden { display: none; }
+
+    /* ============================================================
+       Welcome screen
+       ============================================================ */
+    .welcome {
+      flex: 1;
+      overflow-y: auto;
+      padding: 32px 24px 64px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .welcome-inner {
+      max-width: 980px;
+      width: 100%;
+    }
+    .welcome-hero {
+      text-align: center;
+      padding: 48px 24px 40px;
+    }
+    .welcome-hero .logo-big {
+      width: 72px; height: 72px;
+      margin: 0 auto 20px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, var(--accent), var(--teal));
+      display: grid; place-items: center;
+      color: white; font-weight: 800; font-size: 32px;
+      letter-spacing: -1px;
+      box-shadow: 0 10px 30px rgba(16, 185, 129, 0.35);
+    }
+    .welcome-hero h1 {
+      font-size: 36px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin: 0 0 12px;
+      background: linear-gradient(135deg, var(--text), var(--accent-strong));
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .welcome-hero p {
+      color: var(--text-muted);
+      font-size: 16px;
+      max-width: 580px;
+      margin: 0 auto 24px;
+    }
+    .welcome-hero .cta-row {
+      display: flex; justify-content: center; gap: 10px;
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin: 32px 0 12px;
+      padding: 0 4px;
+    }
+
+    .demo-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 12px;
+    }
+    .demo-card {
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .demo-card:hover {
+      border-color: var(--accent);
+      box-shadow: var(--shadow-sm);
+      transform: translateY(-1px);
+    }
+    .demo-card .icon {
+      width: 36px; height: 36px;
+      border-radius: 8px;
+      display: grid; place-items: center;
+      font-size: 16px; font-weight: 700;
+      flex-shrink: 0;
+    }
+    .demo-card .info { flex: 1; min-width: 0; }
+    .demo-card .name {
+      font-weight: 600; font-size: 14px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .demo-card .meta {
+      font-size: 12px; color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .feature-card {
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .feature-card .icon-wrap {
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+      display: grid; place-items: center;
+      margin-bottom: 10px;
+    }
+    .feature-card h3 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+    .feature-card p { font-size: 12px; color: var(--text-muted); margin: 0; line-height: 1.5; }
+
+    .explainer {
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, var(--accent-soft) 0%, transparent 60%);
+      margin-top: 8px;
+    }
+    .explainer h2 { font-size: 18px; font-weight: 700; margin: 0 0 8px; }
+    .explainer p { color: var(--text-muted); margin: 0 0 12px; line-height: 1.6; }
+    .explainer .link {
+      display: inline-flex; align-items: center; gap: 4px;
+      color: var(--accent-strong); font-weight: 600; font-size: 13px;
+    }
+
+    /* ============================================================
+       Data tab
+       ============================================================ */
+    .data-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-wrap: wrap;
+    }
+    .data-toolbar .title {
+      font-weight: 600; font-size: 14px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .data-toolbar .spacer { flex: 1; }
+
+    .table-search {
+      width: 220px;
+      height: 30px;
+      padding: 0 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-elev);
+      font-size: 12px;
+    }
+    .table-search:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+
+    .page-size-select {
+      height: 30px;
+      padding: 0 24px 0 8px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-elev) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>") no-repeat right 8px center;
+      appearance: none;
+      font-size: 12px;
+    }
+
+    .data-grid-wrap {
+      flex: 1;
+      overflow: auto;
+      min-height: 0;
+      position: relative;
+    }
+    .data-grid {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 13px;
+    }
+    .data-grid thead th {
+      position: sticky; top: 0;
+      background: var(--bg-elev);
+      border-bottom: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      padding: 8px 10px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      z-index: 2;
+      user-select: none;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .data-grid thead th:hover { background: var(--bg-elev-2); }
+    .data-grid thead th.active { color: var(--accent-strong); background: var(--accent-soft); }
+    .data-grid thead th .col-head {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .data-grid thead th .col-name { font-weight: 600; }
+    .data-grid thead th .type-badge {
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--bg-elev-2);
+      color: var(--text-muted);
+      font-weight: 500;
+      text-transform: lowercase;
+      font-family: var(--font-mono);
+    }
+    .data-grid thead th.active .type-badge { background: rgba(255,255,255,0.4); }
+    [data-theme="dark"] .data-grid thead th.active .type-badge { background: rgba(0,0,0,0.3); }
+    .data-grid thead th .sort-arrow { color: var(--accent); font-size: 11px; }
+    .data-grid thead th.action-col {
+      cursor: default;
+      width: 80px;
+      text-align: right;
+    }
+    .data-grid thead th.action-col:hover { background: var(--bg-elev); }
+
+    .data-grid tbody td {
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      vertical-align: middle;
+      max-width: 320px;
+      overflow: hidden;
+    }
+    .data-grid tbody tr:hover td { background: var(--bg-hover); }
+    .data-grid tbody tr:hover .row-actions { opacity: 1; }
+    .data-grid .row-actions {
+      display: flex; justify-content: flex-end; gap: 4px;
+      opacity: 0;
+      transition: opacity 0.12s;
+    }
+    .data-grid .row-actions .btn-icon {
+      width: 26px; height: 26px;
+      border-radius: 5px;
+      color: var(--text-muted);
+    }
+    .data-grid .row-actions .btn-icon:hover {
+      background: var(--bg-elev-2);
+      color: var(--text);
+    }
+    .data-grid .row-actions .btn-icon.danger:hover { color: var(--rose); background: var(--rose-soft); }
+
+    .cell-null { color: var(--text-faint); font-style: italic; font-family: var(--font-mono); font-size: 11px; }
+    .cell-bool {
+      display: inline-flex; align-items: center;
+      padding: 1px 7px; border-radius: 4px;
+      font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    }
+    .cell-bool.true { background: var(--accent-soft); color: var(--accent-strong); }
+    .cell-bool.false { background: var(--rose-soft); color: var(--rose); }
+    .cell-number {
+      font-family: var(--font-mono); font-size: 12px;
+      text-align: right; display: block;
+      font-variant-numeric: tabular-nums;
+    }
+    .cell-string {
+      font-family: var(--font-mono); font-size: 12px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      display: block; max-width: 320px;
+    }
+    .cell-string.clickable { cursor: pointer; color: var(--accent-strong); }
+    .cell-string.clickable:hover { text-decoration: underline; }
+    .cell-json {
+      font-family: var(--font-mono); font-size: 11px;
+      color: var(--accent-strong); cursor: pointer;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .cell-json:hover { text-decoration: underline; }
+    .cell-json .marker { background: var(--accent-soft); padding: 0 4px; border-radius: 3px; }
+
+    .data-footer {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 14px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 12px;
+      color: var(--text-muted);
+      flex: 0 0 auto;
+    }
+    .data-footer .page-info { font-variant-numeric: tabular-nums; }
+    .data-footer .page-nav { display: flex; gap: 2px; }
+    .data-footer .page-nav .btn-icon { width: 28px; height: 28px; }
+    .data-footer .spacer { flex: 1; }
+
+    .empty-state {
+      flex: 1;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 48px 24px; text-align: center;
+      color: var(--text-muted);
+    }
+    .empty-state .icon-big {
+      width: 56px; height: 56px;
+      border-radius: 14px;
+      background: var(--bg-elev);
+      display: grid; place-items: center;
+      margin-bottom: 16px;
+      color: var(--text-faint);
+    }
+    .empty-state h3 { font-size: 15px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
+    .empty-state p { font-size: 13px; margin: 0; max-width: 360px; line-height: 1.5; }
+
+    .loading-spinner {
+      width: 24px; height: 24px;
+      border: 2.5px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-overlay {
+      position: absolute; inset: 0;
+      background: rgba(255,255,255,0.6);
+      display: grid; place-items: center;
+      z-index: 5;
+    }
+    [data-theme="dark"] .loading-overlay { background: rgba(11,17,32,0.6); }
+
+    /* ============================================================
+       Structure tab
+       ============================================================ */
+    .structure-panel {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      min-height: 0;
+    }
+    .structure-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .structure-header .name { font-size: 18px; font-weight: 700; }
+    .structure-header .stats { color: var(--text-muted); font-size: 13px; }
+
+    .structure-block { margin-bottom: 24px; }
+    .structure-block h3 {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin: 0 0 10px;
+    }
+
+    .data-grid.compact thead th { font-size: 11px; padding: 6px 8px; }
+    .data-grid.compact tbody td { padding: 5px 8px; font-size: 12px; }
+    .data-grid.compact thead th.action-col { cursor: default; }
+    .data-grid.compact thead th:hover { background: var(--bg-elev); }
+
+    .doc-fields-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 8px;
+    }
+    .doc-field-card {
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+    }
+    .doc-field-card .key {
+      font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+      color: var(--text);
+      margin-bottom: 4px;
+      word-break: break-all;
+    }
+    .doc-field-card .meta {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      font-size: 11px; color: var(--text-muted);
+    }
+    .doc-field-card .sample {
+      font-family: var(--font-mono); font-size: 11px;
+      color: var(--text-faint);
+      margin-top: 4px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .js-type-badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-weight: 600;
+      text-transform: lowercase;
+    }
+    .js-type-string { background: var(--accent-soft); color: var(--accent-strong); }
+    .js-type-number { background: var(--amber-soft); color: var(--amber); }
+    .js-type-boolean { background: var(--purple-soft); color: var(--purple); }
+    .js-type-object, .js-type-array { background: var(--sky-soft); color: var(--sky); }
+    .js-type-null { background: var(--bg-elev-2); color: var(--text-faint); }
+    .js-type-mixed { background: var(--bg-elev-2); color: var(--text-muted); }
+
+    .index-item {
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      margin-bottom: 6px;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      font-size: 13px;
+    }
+    .index-item .name { font-family: var(--font-mono); font-weight: 600; }
+    .index-item .cols { color: var(--text-muted); font-family: var(--font-mono); font-size: 12px; }
+
+    .ddl-block {
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--text);
+      overflow-x: auto;
+      margin: 0;
+    }
+
+    /* ============================================================
+       Query tab
+       ============================================================ */
+    .query-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .query-editor-wrap {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .query-snippets {
+      display: flex; gap: 6px; flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .snippet-btn {
+      font-size: 11px;
+      padding: 3px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg-elev);
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      transition: all 0.12s;
+    }
+    .snippet-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+    }
+    .query-editor {
+      width: 100%;
+      min-height: 90px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg-elev);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      resize: vertical;
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .query-editor:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+    .query-actions {
+      display: flex; align-items: center; gap: 8px;
+      margin-top: 8px;
+    }
+    .query-hint {
+      font-size: 11px; color: var(--text-faint);
+      margin-left: auto;
+    }
+    .query-hint kbd {
+      font-family: var(--font-mono);
+      background: var(--bg-elev-2);
+      padding: 1px 5px;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+      font-size: 10px;
+    }
+
+    .query-results {
+      flex: 1;
+      overflow: auto;
+      min-height: 0;
+    }
+    .query-stats {
+      display: flex; align-items: center; gap: 16px;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-elev);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .query-stats .stat { display: flex; align-items: center; gap: 4px; }
+    .query-stats .stat strong { color: var(--text); font-weight: 600; }
+
+    .query-error {
+      margin: 14px;
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      background: var(--rose-soft);
+      border: 1px solid var(--rose);
+      color: var(--rose);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
+
+    .query-empty {
+      padding: 48px;
+      text-align: center;
+      color: var(--text-faint);
+      font-size: 13px;
+    }
+
+    /* ============================================================
+       Info tab
+       ============================================================ */
+    .info-panel {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      min-height: 0;
+    }
+    .info-hero {
+      padding: 24px;
+      border-radius: var(--radius-lg);
+      color: white;
+      margin-bottom: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+    .info-hero.solodb {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--teal) 100%);
+    }
+    .info-hero.sqlite {
+      background: linear-gradient(135deg, #334155 0%, #1e293b 100%);
+    }
+    .info-hero::before {
+      content: '';
+      position: absolute;
+      top: -40%; right: -10%;
+      width: 60%; height: 200%;
+      background: radial-gradient(circle, rgba(255,255,255,0.18) 0%, transparent 60%);
+      pointer-events: none;
+    }
+    .info-hero h2 {
+      font-size: 24px; font-weight: 800;
+      margin: 0 0 6px;
+      position: relative;
+    }
+    .info-hero .path {
+      font-family: var(--font-mono); font-size: 12px;
+      opacity: 0.9; word-break: break-all;
+      position: relative;
+    }
+    .info-hero .badges {
+      display: flex; gap: 6px; margin-top: 10px;
+      position: relative;
+    }
+    .info-hero .badges .badge {
+      background: rgba(255,255,255,0.25);
+      color: white;
+    }
+
+    .info-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .info-stat-card {
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .info-stat-card .label {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-muted); font-weight: 600;
+    }
+    .info-stat-card .value {
+      font-size: 22px; font-weight: 700; margin-top: 4px;
+      font-variant-numeric: tabular-nums;
+    }
+    .info-stat-card .sub { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    @media (max-width: 768px) {
+      .info-grid { grid-template-columns: 1fr; }
+    }
+    .info-card {
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .info-card h3 {
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-muted); margin: 0 0 10px;
+    }
+    .info-card .item {
+      padding: 6px 8px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px;
+    }
+    .info-card .item:hover { background: var(--bg-hover); }
+    .info-card .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .info-card .item .count {
+      font-size: 11px; color: var(--text-faint);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .pragma-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 6px;
+    }
+    .pragma-item {
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      font-size: 12px;
+      display: flex; flex-direction: column;
+    }
+    .pragma-item .name { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; }
+    .pragma-item .value { font-family: var(--font-mono); font-weight: 600; word-break: break-all; }
+
+    .about-card {
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, var(--accent-soft) 0%, transparent 60%);
+      margin-top: 16px;
+    }
+    .about-card h3 { margin: 0 0 6px; font-size: 14px; font-weight: 700; }
+    .about-card p { margin: 0 0 8px; font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+    .about-card a { font-weight: 600; font-size: 13px; }
+
+    /* ============================================================
+       Status bar (footer)
+       ============================================================ */
+    .statusbar {
+      height: var(--footer-h);
+      flex: 0 0 var(--footer-h);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 12px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-elev);
+      font-size: 11px;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .statusbar .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--text-faint);
+    }
+    .statusbar .dot.connected { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+    .statusbar .sep { color: var(--border-strong); }
+    .statusbar .spacer { flex: 1; }
+    .statusbar .hint { color: var(--text-faint); }
+
+    /* ============================================================
+       Modal
+       ============================================================ */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 60px 16px 16px;
+      z-index: 100;
+      animation: fadeIn 0.12s ease-out;
+    }
+    [data-theme="dark"] .modal-overlay { background: rgba(0, 0, 0, 0.65); }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    .modal {
+      width: 100%;
+      max-width: 560px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      max-height: calc(100vh - 80px);
+      display: flex;
+      flex-direction: column;
+      animation: slideUp 0.16s ease-out;
+    }
+    @keyframes slideUp { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .modal.modal-lg { max-width: 760px; }
+    .modal.modal-xl { max-width: 960px; }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .modal-header h2 { font-size: 15px; font-weight: 700; margin: 0; }
+    .modal-close {
+      width: 28px; height: 28px;
+      display: grid; place-items: center;
+      border-radius: 6px;
+      color: var(--text-muted);
+    }
+    .modal-close:hover { background: var(--bg-hover); color: var(--text); }
+
+    .modal-body {
+      padding: 16px 18px;
+      overflow-y: auto;
+      flex: 1;
+      min-height: 0;
+    }
+    .modal-footer {
+      padding: 12px 18px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      background: var(--bg-elev);
+      border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    }
+
+    /* Tabs inside modal */
+    .modal-tabs {
+      display: flex;
+      gap: 2px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .modal-tab {
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      font-weight: 500;
+      margin-bottom: -1px;
+    }
+    .modal-tab:hover { color: var(--text); }
+    .modal-tab.active { color: var(--accent-strong); border-bottom-color: var(--accent); }
+    .modal-tab-pane { display: none; padding: 14px 18px; }
+    .modal-tab-pane.active { display: block; }
+
+    .form-row { margin-bottom: 12px; }
+    .form-row label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+    .form-input, .form-select, .form-textarea {
+      width: 100%;
+      height: 34px;
+      padding: 0 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-elev);
+      color: var(--text);
+      font-size: 13px;
+    }
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      outline: none; border-color: var(--accent); box-shadow: var(--ring);
+    }
+    .form-textarea {
+      height: auto;
+      padding: 10px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.5;
+      resize: vertical;
+      min-height: 100px;
+    }
+    .form-textarea.tall { min-height: 240px; }
+    .form-hint {
+      font-size: 11px; color: var(--text-faint); margin-top: 4px;
+    }
+
+    /* File list in open modal */
+    .file-list, .conn-list {
+      max-height: 360px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg-elev);
+    }
+    .file-item, .conn-item {
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .file-item:last-child, .conn-item:last-child { border-bottom: none; }
+    .file-item:hover, .conn-item:hover { background: var(--bg-hover); }
+    .file-item .icon, .conn-item .icon {
+      width: 30px; height: 30px;
+      border-radius: 7px;
+      display: grid; place-items: center;
+      flex-shrink: 0;
+      font-size: 13px; font-weight: 700;
+    }
+    .file-item .icon.solodb, .conn-item .icon.solodb {
+      background: var(--accent-soft); color: var(--accent-strong);
+    }
+    .file-item .icon.sqlite, .conn-item .icon.sqlite {
+      background: var(--sky-soft); color: var(--sky);
+    }
+    .file-item .info, .conn-item .info { flex: 1; min-width: 0; }
+    .file-item .name, .conn-item .name {
+      font-weight: 600; font-size: 13px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .file-item .meta, .conn-item .meta {
+      font-size: 11px; color: var(--text-muted);
+      margin-top: 2px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .conn-item .delete-btn {
+      width: 26px; height: 26px;
+      display: grid; place-items: center;
+      border-radius: 5px;
+      color: var(--text-faint);
+    }
+    .conn-item .delete-btn:hover { background: var(--rose-soft); color: var(--rose); }
+    .file-item .delete-btn {
+      width: 26px; height: 26px;
+      display: grid; place-items: center;
+      border-radius: 5px;
+      color: var(--text-faint);
+      opacity: 0;
+      transition: opacity .12s;
+    }
+    .file-item:hover .delete-btn { opacity: 1; }
+    .file-item .delete-btn:hover { background: var(--rose-soft); color: var(--rose); }
+
+    .upload-dropzone {
+      display: flex; align-items: center; gap: 8px;
+      padding: 14px 12px;
+      margin-bottom: 8px;
+      border: 1.5px dashed var(--border-strong);
+      border-radius: 8px;
+      background: var(--bg-elev);
+      color: var(--text-muted);
+      font-size: 12px;
+      cursor: pointer;
+      transition: border-color .12s, background .12s;
+    }
+    .upload-dropzone:hover, .upload-dropzone:focus {
+      border-color: var(--accent);
+      color: var(--text);
+      outline: none;
+    }
+    .upload-dropzone.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+    }
+    .upload-dropzone .link {
+      color: var(--accent-strong);
+      text-decoration: underline;
+    }
+    .upload-dropzone .icon-svg {
+      width: 16px; height: 16px;
+      color: var(--accent);
+    }
+
+    .empty-list {
+      padding: 32px 16px;
+      text-align: center;
+      color: var(--text-faint);
+      font-size: 13px;
+    }
+
+    /* New table dialog — card selector */
+    .kind-selector {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .kind-card {
+      padding: 14px;
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.15s;
+      background: var(--surface);
+    }
+    .kind-card:hover { border-color: var(--border-strong); }
+    .kind-card.selected.solodb { border-color: var(--accent); background: var(--accent-soft); }
+    .kind-card.selected.regular { border-color: var(--sky); background: var(--sky-soft); }
+    .kind-card .icon-wrap {
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      display: grid; place-items: center;
+      margin-bottom: 8px;
+    }
+    .kind-card.solodb .icon-wrap { background: var(--accent-soft); color: var(--accent-strong); }
+    .kind-card.regular .icon-wrap { background: var(--sky-soft); color: var(--sky); }
+    .kind-card h4 { font-size: 14px; font-weight: 700; margin: 0 0 4px; }
+    .kind-card p { font-size: 12px; color: var(--text-muted); margin: 0; line-height: 1.4; }
+
+    /* Column builder */
+    .column-builder { margin-top: 8px; }
+    .column-row {
+      display: grid;
+      grid-template-columns: 1.6fr 1fr auto auto auto;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .column-row input, .column-row select {
+      height: 30px;
+      padding: 0 8px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-elev);
+      font-size: 12px;
+    }
+    .column-row input:focus, .column-row select:focus {
+      outline: none; border-color: var(--accent);
+    }
+    .column-row .col-check {
+      display: flex; align-items: center; justify-content: center;
+      width: 30px; height: 30px;
+    }
+    .column-row .col-check label {
+      font-size: 10px; color: var(--text-faint);
+      display: flex; flex-direction: column; align-items: center;
+      cursor: pointer;
+    }
+    .column-row .col-check input { margin: 0; }
+    .column-row .col-remove {
+      width: 30px; height: 30px;
+      display: grid; place-items: center;
+      border-radius: 5px;
+      color: var(--text-faint);
+    }
+    .column-row .col-remove:hover { background: var(--rose-soft); color: var(--rose); }
+
+    /* ============================================================
+       Popovers (for cell expansion / JSON tree)
+       ============================================================ */
+    .popover {
+      position: fixed;
+      z-index: 200;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-lg);
+      padding: 12px;
+      max-width: 480px;
+      max-height: 360px;
+      overflow: auto;
+      animation: slideUp 0.1s ease-out;
+    }
+    .popover pre {
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: var(--text);
+    }
+    .popover .raw-pre {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    /* JSON tree */
+    .json-tree {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .json-tree .node { display: flex; align-items: flex-start; gap: 4px; }
+    .json-tree .node .guide {
+      color: var(--border-strong);
+      white-space: pre;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    .json-tree .node .chevron {
+      cursor: pointer;
+      width: 14px;
+      flex-shrink: 0;
+      color: var(--text-muted);
+      display: inline-flex;
+      align-items: center;
+      padding-top: 2px;
+    }
+    .json-tree .node .chevron:hover { color: var(--text); }
+    .json-tree .node .key { color: var(--text); }
+    .json-tree .node .colon { color: var(--text-faint); }
+    .json-tree .node .val-string { color: var(--accent-strong); }
+    .json-tree .node .val-number { color: var(--amber); }
+    .json-tree .node .val-boolean { color: var(--purple); }
+    .json-tree .node .val-null { color: var(--text-faint); font-style: italic; }
+    .json-tree .node .val-container { color: var(--sky); }
+    .json-tree .node .comma { color: var(--text-faint); }
+    .json-tree .node .preview { color: var(--text-faint); }
+
+    /* ============================================================
+       Toasts
+       ============================================================ */
+    #toast-root {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      display: flex;
+      flex-direction: column-reverse;
+      gap: 8px;
+      z-index: 300;
+      pointer-events: none;
+    }
+    .toast {
+      pointer-events: auto;
+      min-width: 260px;
+      max-width: 380px;
+      padding: 12px 14px;
+      border-radius: var(--radius);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 13px;
+      animation: toastIn 0.18s ease-out;
+    }
+    @keyframes toastIn {
+      from { transform: translateX(20px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    .toast.success { border-left: 3px solid var(--accent); }
+    .toast.error { border-left: 3px solid var(--rose); }
+    .toast.info { border-left: 3px solid var(--sky); }
+    .toast .toast-icon {
+      flex-shrink: 0;
+      width: 18px; height: 18px;
+      display: grid; place-items: center;
+    }
+    .toast.success .toast-icon { color: var(--accent); }
+    .toast.error .toast-icon { color: var(--rose); }
+    .toast.info .toast-icon { color: var(--sky); }
+    .toast .toast-body { flex: 1; min-width: 0; }
+    .toast .toast-title { font-weight: 600; margin-bottom: 2px; }
+    .toast .toast-msg { color: var(--text-muted); font-size: 12px; word-break: break-word; }
+    .toast .toast-close {
+      color: var(--text-faint);
+      width: 18px; height: 18px;
+      display: grid; place-items: center;
+      border-radius: 4px;
+    }
+    .toast .toast-close:hover { background: var(--bg-hover); color: var(--text); }
+
+    /* Confirm dialog */
+    .confirm-text { font-size: 14px; margin: 0 0 6px; }
+    .confirm-sub { font-size: 12px; color: var(--text-muted); margin: 0; }
+
+    /* Type badge in headers */
+    .col-type {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: var(--bg-elev-2);
+      color: var(--text-muted);
+      text-transform: lowercase;
+    }
+
+    /* Small icon helpers (inline SVG-styled) */
+    .icon-svg { width: 16px; height: 16px; display: inline-block; vertical-align: middle; }
+    .icon-svg.sm { width: 14px; height: 14px; }
+
+    /* ============================================================
+       Quick actions bar (data tab)
+       ============================================================ */
+    .quick-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-elev);
+      flex-wrap: wrap;
+      font-size: 12px;
+    }
+    .quick-actions .qa-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-right: 2px;
+      white-space: nowrap;
+    }
+    .quick-actions .qa-divider {
+      width: 1px;
+      height: 18px;
+      background: var(--border);
+      flex: 0 0 1px;
+    }
+    .quick-actions select.qa-select {
+      height: 28px;
+      padding: 0 22px 0 8px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 12px;
+      color: var(--text);
+      appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 6px center;
+      max-width: 160px;
+    }
+    .quick-actions select.qa-select:focus {
+      outline: none; border-color: var(--accent); box-shadow: var(--ring);
+    }
+    .quick-actions input.qa-input {
+      width: 64px;
+      height: 28px;
+      padding: 0 8px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+    .quick-actions input.qa-input:focus {
+      outline: none; border-color: var(--accent); box-shadow: var(--ring);
+    }
+    .quick-actions .btn-sm { height: 28px; }
+    .quick-actions .qa-static {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ============================================================
+       Browse tab (open modal)
+       ============================================================ */
+    .browse-pane { padding: 14px 18px; }
+    .browse-hint {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+    .browse-path-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-bottom: 10px;
+      font-size: 12px;
+    }
+    .browse-path-bar .path-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .browse-path-bar .path-text {
+      flex: 1;
+      font-family: var(--font-mono);
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+    .browse-list {
+      max-height: 360px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg-elev);
+    }
+    .browse-item {
+      padding: 9px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .browse-item:last-child { border-bottom: none; }
+    .browse-item:hover { background: var(--bg-hover); }
+    .browse-item .icon {
+      width: 26px; height: 26px;
+      border-radius: 6px;
+      display: grid; place-items: center;
+      flex-shrink: 0;
+    }
+    .browse-item .icon.folder { background: var(--amber-soft); color: var(--amber); }
+    .browse-item .icon.dbfile { background: var(--accent-soft); color: var(--accent-strong); }
+    .browse-item .name {
+      flex: 1; min-width: 0;
+      font-size: 13px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .browse-item.folder .name { font-weight: 500; }
+    .browse-item.dbfile .name { font-weight: 600; }
+    .browse-item .meta {
+      font-size: 11px; color: var(--text-faint);
+      font-family: var(--font-mono);
+      white-space: nowrap;
+    }
+    .browse-error {
+      padding: 12px 14px;
+      background: var(--rose-soft);
+      border: 1px solid var(--rose);
+      border-radius: var(--radius-sm);
+      color: var(--rose);
+      font-size: 12px;
+      margin-bottom: 10px;
+      white-space: pre-wrap;
+      font-family: var(--font-mono);
+    }
+    .browse-empty {
+      padding: 32px 16px;
+      text-align: center;
+      color: var(--text-faint);
+      font-size: 13px;
+    }
+
+    /* Lang toggle button — compact */
+    .btn-lang {
+      min-width: 44px;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    /* Responsive: collapse sidebar on small screens */
+    @media (max-width: 768px) {
+      .sidebar { display: none; }
+      .topbar .db-summary .stats { display: none; }
+      .data-toolbar { padding: 8px; }
+      .table-search { width: 140px; }
+      .quick-actions { padding: 6px 8px; gap: 6px; }
+      .quick-actions .qa-label { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- Top bar -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">S</div>
+        <span id="brand-text">SoloDB Manager</span>
+      </div>
+      <div id="db-summary-slot"></div>
+      <div class="spacer"></div>
+      <div class="actions" id="topbar-actions"></div>
+    </header>
+
+    <!-- Main content -->
+    <div class="main" id="main"></div>
+
+    <!-- Status bar -->
+    <footer class="statusbar" id="statusbar">
+      <span class="dot" id="status-dot"></span>
+      <span id="status-db">No database</span>
+      <span class="sep">·</span>
+      <span id="status-sqlite"></span>
+      <span class="sep">·</span>
+      <span id="status-table">No table selected</span>
+      <span id="status-rows"></span>
+      <div class="spacer"></div>
+      <span class="hint" id="statusbar-hint">SoloDB Manager</span>
+    </footer>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+  <div id="popover-root"></div>
+
+  <script>
+  /* ================================================================
+     SoloDB Manager — vanilla JS SPA.
+     Sections:
+       0. I18N (internationalization, zh/en)
+       1. State + constants
+       2. API client
+       3. Utilities (format, classify, dom, toast)
+       4. JSON tree renderer
+       5. Cell renderer
+       6. Welcome screen
+       7. Main app shell (topbar, sidebar, tabs)
+       8. Data tab
+       9. Structure tab
+      10. Query tab
+      11. Info tab
+      12. Modals (open, new-table, insert/edit, confirm)
+      13. Init + event wiring
+     ================================================================ */
+
+  /* ---------- 0. I18N ---------- */
+  const I18N = {
+    en: {
+      'app.title': 'SoloDB Manager',
+      'app.subtitle': 'SQLite & SoloDB GUI',
+      'app.footerHint': 'SoloDB Manager',
+
+      'topbar.openDatabase': 'Open Database',
+      'topbar.refresh': 'Refresh',
+      'topbar.darkMode': 'Dark mode',
+      'topbar.lightMode': 'Light mode',
+      'topbar.docsTooltip': 'SoloDB docs',
+      'topbar.langToggle': '中文',
+
+      'status.noDatabase': 'No database',
+      'status.noTableSelected': 'No table selected',
+      'status.rowsSuffix': ' rows',
+
+      'welcome.heroTitle': 'SoloDB Manager',
+      'welcome.heroSubtitle': 'Browse, query, and manage SoloDB document databases and plain SQLite files. Inspect collections, edit documents, run SQL — all in your browser.',
+      'welcome.demoDatabases': 'Demo Databases',
+      'welcome.features': 'Features',
+      'welcome.feature.autoflatten.title': 'Auto-flattened documents',
+      'welcome.feature.autoflatten.desc': 'SoloDB JSON documents are flattened into typed columns automatically — see fields, arrays, and nested objects at a glance.',
+      'welcome.feature.sql.title': 'SQL with json_extract',
+      'welcome.feature.sql.desc': "Run raw SQL with SoloDB-aware snippets. Query document fields directly with json_extract(Value, '$.Name').",
+      'welcome.feature.edit.title': 'Inline editing',
+      'welcome.feature.edit.desc': 'Edit JSON documents or regular table rows in a typed form. Insert, update, and delete with one click.',
+      'welcome.feature.schema.title': 'Schema inspector',
+      'welcome.feature.schema.desc': 'View columns, indexes, inferred document fields, and the original CREATE TABLE DDL for any table.',
+      'welcome.explainer.title': 'What is SoloDB?',
+      'welcome.explainer.p1': 'SoloDB is a lightweight embedded document database built on SQLite. It stores .NET objects as JSON documents (using JSONB for compact storage) inside ordinary SQLite tables. Each collection is a table with three columns — Id, Value, and Metadata — so you get the simplicity of a document store with the reliability and tooling of SQLite.',
+      'welcome.explainer.p2': 'This manager auto-detects SoloDB databases, flattens documents for browsing, and lets you run raw SQL with json_extract support. It also works on plain .db / .sqlite files.',
+      'welcome.explainer.docsLink': 'Read the SoloDB docs',
+      'welcome.noDemoFiles': 'No database files found in the databases/ folder.',
+
+      'sidebar.filterPlaceholder': 'Filter tables…',
+      'sidebar.newTable': 'New Table / Collection',
+      'sidebar.empty': 'No tables in this database.',
+      'sidebar.noMatches': 'No matches.',
+      'sidebar.none': 'None',
+      'sidebar.section.collections': 'Collections',
+      'sidebar.section.tables': 'Tables',
+      'sidebar.section.internal': 'SoloDB Internal',
+      'sidebar.itemTitle': '{name} ({kind}) · right-click to drop',
+
+      'tab.data': 'Data',
+      'tab.structure': 'Structure',
+      'tab.query': 'Query',
+      'tab.info': 'Info',
+
+      'data.noTableTitle': 'No table selected',
+      'data.noTableSub': 'Select a table or collection from the sidebar to view its data.',
+      'data.rowCount': '{n} rows',
+      'data.searchPlaceholder': 'Search…',
+      'data.pageSizeSuffix': ' / page',
+      'data.refresh': 'Refresh',
+      'data.newDocument': 'New Document',
+      'data.newRow': 'New Row',
+      'data.noRows': 'No rows',
+      'data.loading': 'Loading…',
+      'data.noData': 'No data',
+      'data.noMatch': 'No rows match your search.',
+      'data.empty': 'This table is empty. Click "New Row" to add one.',
+      'data.emptyCollection': 'This collection is empty. Click "New Document" to add one.',
+      'data.fetching': 'Fetching data…',
+      'data.edit': 'Edit',
+      'data.delete': 'Delete',
+      'data.showing': 'Showing {from}–{to} of {total}',
+      'data.firstPage': 'First page',
+      'data.prevPage': 'Previous page',
+      'data.nextPage': 'Next page',
+      'data.lastPage': 'Last page',
+      'data.pageOf': 'Page {page} of {total}',
+
+      'quick.title': 'Quick actions',
+      'quick.sortColDesc': 'Sort by column ↓',
+      'quick.sortColAsc': 'Sort by column ↑',
+      'quick.firstN': 'First',
+      'quick.firstNRows': 'rows',
+      'quick.apply': 'Apply',
+      'quick.clear': 'Clear filters',
+      'quick.newestFirst': 'Newest first',
+      'quick.oldestFirst': 'Oldest first',
+      'quick.selectColumn': 'Select column…',
+
+      'structure.noTableTitle': 'No table selected',
+      'structure.noTableSub': 'Select a table to inspect its schema.',
+      'structure.noSchemaTitle': 'No schema loaded',
+      'structure.noSchemaSub': 'Try refreshing.',
+      'structure.rowCount': '{n} rows',
+      'structure.columns': 'Columns ({n})',
+      'structure.docFields': 'Document Fields ({n})',
+      'structure.indexes': 'Indexes ({n})',
+      'structure.ddl': 'DDL',
+      'structure.col.hash': '#',
+      'structure.col.name': 'Name',
+      'structure.col.type': 'Type',
+      'structure.col.null': 'Null',
+      'structure.col.key': 'Key',
+      'structure.col.default': 'Default',
+      'structure.notNull': 'NOT NULL',
+      'structure.null': 'NULL',
+      'structure.pk': 'PK',
+      'structure.unique': 'UNIQUE',
+      'structure.partial': 'PARTIAL',
+      'structure.nullable': 'nullable',
+      'structure.required': 'required',
+      'structure.eg': 'e.g. ',
+      'structure.anyType': 'any',
+
+      'query.placeholder': "SELECT * FROM ...\n\nTip: use json_extract(Value, '$.Name') to query SoloDB document fields.",
+      'query.run': 'Run',
+      'query.pressToRun': 'Press ',
+      'query.toRun': ' to run',
+      'query.error': 'Error',
+      'query.rows': ' rows',
+      'query.affected': ' affected',
+      'query.duration': ' duration',
+      'query.empty': 'Run a query to see results here.',
+      'query.executed': 'Query executed. No result set returned.',
+      'query.openFirst': 'Open a database first.',
+      'query.sqlEmpty': 'SQL is empty.',
+      'snippet.select': 'SELECT *',
+      'snippet.count': 'Count',
+      'snippet.solodbField': 'SoloDB field',
+      'snippet.schema': 'Schema',
+      'snippet.tables': 'Tables',
+
+      'info.noDatabaseTitle': 'No database open',
+      'info.noDatabaseSub': 'Open a database to view its info.',
+      'info.solodb': 'SoloDB',
+      'info.plainSqlite': 'Plain SQLite',
+      'info.solodbVersion': 'SoloDB v{n}',
+      'info.sqliteVersion': 'SQLite {n}',
+      'info.stat.fileSize': 'File size',
+      'info.stat.tables': 'Tables',
+      'info.stat.collections': 'Collections',
+      'info.stat.totalRows': 'Total rows',
+      'info.sub.collections': '{n} collections',
+      'info.sub.solodbDocs': 'SoloDB documents',
+      'info.sub.acrossAll': 'across all tables',
+      'info.collections': 'Collections ({n})',
+      'info.tables': 'Tables ({n})',
+      'info.internal': 'SoloDB Internal ({n})',
+      'info.pragmas': 'SQLite Pragmas ({n})',
+      'info.noCollections': 'No collections',
+      'info.noTables': 'No regular tables',
+      'info.about': 'About SoloDB',
+      'info.aboutSolodb': 'This database is a SoloDB store — .NET objects persisted as JSONB documents in SQLite. Each collection has Id, Value (JSONB), and Metadata (JSONB) columns.',
+      'info.aboutSqlite': 'This is a plain SQLite database file. You can still browse tables and run SQL — SoloDB features (document flattening, json_extract snippets) work best on SoloDB collections.',
+      'info.readDocs': 'Read the SoloDB docs',
+
+      'open.title': 'Open Database',
+      'open.tab.files': 'Files',
+      'open.tab.recent': 'Recent',
+      'open.tab.path': 'Path',
+      'open.tab.browse': 'Browse',
+      'open.files.hint': 'Click a file to open it. Upload or create new ones below.',
+      'open.dropzone.pre': 'Drop database files here or ',
+      'open.dropzone.link': 'browse',
+      'open.loading': 'Loading…',
+      'open.noFiles': 'No database files yet. Upload one above or create from the Path tab.',
+      'open.noRecent': 'No recent connections.',
+      'open.lastOpened': ' · last opened ',
+      'open.unknown': 'unknown',
+      'open.deleteFileTitle': 'Delete file',
+      'open.deleteFileConfirm': 'Delete "{name}"?\nThis permanently removes the file from the server.',
+      'open.deleteRecentTitle': 'Remove from recent',
+      'open.pathLabel': 'Database file name or absolute path',
+      'open.pathPlaceholder': 'mydb.db  or  /absolute/path/to/file.db',
+      'open.pathHint': "Relative paths resolve to the app's databases/ folder.",
+      'open.createLabel': 'Create new database (optional)',
+      'open.createPlaceholder': 'new-database.db',
+      'open.createHint': 'If the file does not exist, it will be created.',
+      'open.cancel': 'Cancel',
+      'open.open': 'Open',
+      'open.enterPath': 'Enter a path or file name.',
+
+      'browse.hint': 'Browse the local filesystem and open a database directly by path (no upload needed).',
+      'browse.up': 'Up',
+      'browse.empty': 'This folder is empty.',
+      'browse.noDbFiles': 'No database files in this folder.',
+      'browse.errorTitle': 'Cannot read folder',
+      'browse.parent': 'Parent directory',
+      'browse.openFile': 'Open this database',
+      'browse.openFolder': 'Open folder',
+      'browse.sizeLabel': 'Size',
+      'browse.breadcrumb': 'Path:',
+      'browse.home': 'Home',
+      'browse.loading': 'Loading…',
+
+      'newtable.openFirst': 'Open a database first.',
+      'newtable.title': 'New Table / Collection',
+      'newtable.solodb.title': 'SoloDB Collection',
+      'newtable.solodb.desc': 'A document store. Each row is a JSON document stored in a Value (JSONB) column. Id and Metadata columns are added automatically.',
+      'newtable.regular.title': 'Regular Table',
+      'newtable.regular.desc': 'A plain SQLite table with custom columns and types. Use for relational data.',
+      'newtable.nameLabel': 'Name',
+      'newtable.namePlaceholder': 'e.g. Customer or orders',
+      'newtable.cancel': 'Cancel',
+      'newtable.create': 'Create',
+      'newtable.noteSolodb': 'SoloDB collections use a fixed schema: Id (INTEGER PRIMARY KEY), Value (JSONB), and Metadata (JSONB). Just provide a name.',
+      'newtable.noteRegular': 'Define columns below. SQLite is flexible with types — common types: INTEGER, TEXT, REAL, BLOB, NUMERIC.',
+      'newtable.columns': 'Columns',
+      'newtable.addColumn': 'Add column',
+      'newtable.colNamePlaceholder': 'column name',
+      'newtable.pk': 'PK',
+      'newtable.nn': 'NN',
+      'newtable.removeColumn': 'Remove column',
+      'newtable.enterName': 'Enter a name.',
+      'newtable.addCol': 'Add at least one column.',
+      'newtable.createdCollection': 'Created collection "{name}".',
+      'newtable.createdTable': 'Created table "{name}".',
+
+      'edit.editDocument': 'Edit Document',
+      'edit.editRow': 'Edit Row',
+      'edit.newDocument': 'New Document',
+      'edit.newRow': 'New Row',
+      'edit.titleSep': ' — ',
+      'edit.tabValue': 'Value',
+      'edit.tabMetadata': 'Metadata',
+      'edit.valueHint': 'Edit the JSON document. This will be stored as JSONB in the Value column.',
+      'edit.valueTip': "Tip: use json_extract(Value, '$.field') in SQL to query these fields.",
+      'edit.metaHint': 'Optional metadata JSON. Stored in the Metadata column.',
+      'edit.cancel': 'Cancel',
+      'edit.save': 'Save',
+      'edit.insert': 'Insert',
+      'edit.valueInvalid': 'Value is not valid JSON: ',
+      'edit.metaInvalid': 'Metadata is not valid JSON: ',
+      'edit.docUpdated': 'Document updated.',
+      'edit.docInserted': 'Document inserted.',
+      'edit.rowUpdated': 'Row updated.',
+      'edit.rowInserted': 'Row inserted.',
+      'edit.schemaNotLoaded': 'Schema not loaded. Please reselect the table.',
+      'edit.close': 'Close',
+      'edit.notNull': 'NOT NULL',
+      'edit.pk': 'PK',
+      'edit.colHintDefault': '{type} · default: {default}',
+      'edit.defaultDoc': '{ Name: "", Email: "" }',
+
+      'confirm.deleteRowTitle': 'Delete row?',
+      'confirm.deleteRowText': 'Are you sure you want to delete this row?',
+      'confirm.deleteRowSub': 'This action cannot be undone.',
+      'confirm.cancel': 'Cancel',
+      'confirm.delete': 'Delete',
+      'confirm.rowDeleted': 'Row deleted.',
+      'confirm.dropTitle': 'Drop {kind}?',
+      'confirm.dropPrefix': 'Drop "',
+      'confirm.dropSuffix': '"?',
+      'confirm.dropSub': 'This will permanently delete the {kind} and all {n} rows. Type the table name to confirm.',
+      'confirm.dropPlaceholder': 'Type the table name to confirm',
+      'confirm.drop': 'Drop',
+      'confirm.nameMismatch': 'Name does not match.',
+      'confirm.dropped': 'Dropped "{name}".',
+
+      'toast.success': 'Success',
+      'toast.error': 'Error',
+      'toast.opened': 'Opened {name}',
+      'toast.solodbDb': 'SoloDB database',
+      'toast.sqliteDb': 'SQLite database',
+      'toast.failedOpen': 'Failed to open database',
+      'toast.deleted': 'Deleted {name}',
+      'toast.deleteFailed': 'Delete failed: ',
+      'toast.removedRecent': 'Removed "{name}" from recent.',
+      'toast.uploadedN': 'Uploaded {n} file(s).',
+      'toast.uploadFailed': 'Upload failed: ',
+      'toast.refreshFailed': 'Refresh failed',
+      'toast.failedLoadData': 'Failed to load data',
+      'toast.networkError': 'Network error: ',
+
+      'kind.solodbCollection': 'SoloDB Collection',
+      'kind.solodbInternal': 'SoloDB Internal',
+      'kind.regular': 'Table',
+      'kind.collectionLower': 'collection',
+      'kind.tableLower': 'table',
+
+      'cell.null': 'NULL',
+      'cell.true': 'true',
+      'cell.false': 'false',
+
+      'dbSummary.stats': '{tables} tables · {rows} rows · {size}',
+    },
+    zh: {
+      'app.title': 'SoloDB 管理器',
+      'app.subtitle': 'SQLite & SoloDB 图形界面',
+      'app.footerHint': 'SoloDB 管理器',
+
+      'topbar.openDatabase': '打开数据库',
+      'topbar.refresh': '刷新',
+      'topbar.darkMode': '深色模式',
+      'topbar.lightMode': '浅色模式',
+      'topbar.docsTooltip': 'SoloDB 文档',
+      'topbar.langToggle': 'EN',
+
+      'status.noDatabase': '未打开数据库',
+      'status.noTableSelected': '未选择表',
+      'status.rowsSuffix': ' 行',
+
+      'welcome.heroTitle': 'SoloDB 管理器',
+      'welcome.heroSubtitle': '浏览、查询和管理 SoloDB 文档数据库以及普通 SQLite 文件。查看集合、编辑文档、运行 SQL — 全部在浏览器中完成。',
+      'welcome.demoDatabases': '示例数据库',
+      'welcome.features': '功能特性',
+      'welcome.feature.autoflatten.title': '文档自动展开',
+      'welcome.feature.autoflatten.desc': 'SoloDB JSON 文档会自动展开为带类型的列 — 字段、数组和嵌套对象一目了然。',
+      'welcome.feature.sql.title': 'SQL + json_extract',
+      'welcome.feature.sql.desc': "运行原生 SQL，配合 SoloDB 专属代码片段。使用 json_extract(Value, '$.Name') 直接查询文档字段。",
+      'welcome.feature.edit.title': '内联编辑',
+      'welcome.feature.edit.desc': '在带类型的表单中编辑 JSON 文档或普通表行。一键插入、更新和删除。',
+      'welcome.feature.schema.title': '结构查看器',
+      'welcome.feature.schema.desc': '查看任意表的列、索引、推断的文档字段以及原始 CREATE TABLE DDL。',
+      'welcome.explainer.title': '什么是 SoloDB？',
+      'welcome.explainer.p1': 'SoloDB 是一个基于 SQLite 构建的轻量级嵌入式文档数据库。它将 .NET 对象作为 JSON 文档（使用 JSONB 紧凑存储）保存在普通 SQLite 表中。每个集合都是一张三列表 — Id、Value 和 Metadata — 让你既能享受文档数据库的简洁，又能用上 SQLite 的可靠性与工具链。',
+      'welcome.explainer.p2': '本管理器会自动识别 SoloDB 数据库、展开文档以便浏览，并支持带 json_extract 的原生 SQL。它也适用于普通的 .db / .sqlite 文件。',
+      'welcome.explainer.docsLink': '阅读 SoloDB 文档',
+      'welcome.noDemoFiles': 'databases/ 目录下没有找到数据库文件。',
+
+      'sidebar.filterPlaceholder': '筛选表…',
+      'sidebar.newTable': '新建表 / 集合',
+      'sidebar.empty': '此数据库中没有表。',
+      'sidebar.noMatches': '无匹配项。',
+      'sidebar.none': '无',
+      'sidebar.section.collections': '集合',
+      'sidebar.section.tables': '表',
+      'sidebar.section.internal': 'SoloDB 内部表',
+      'sidebar.itemTitle': '{name}（{kind}）· 右键删除',
+
+      'tab.data': '数据',
+      'tab.structure': '结构',
+      'tab.query': '查询',
+      'tab.info': '信息',
+
+      'data.noTableTitle': '未选择表',
+      'data.noTableSub': '从左侧边栏选择一个表或集合以查看数据。',
+      'data.rowCount': '{n} 行',
+      'data.searchPlaceholder': '搜索…',
+      'data.pageSizeSuffix': ' / 页',
+      'data.refresh': '刷新',
+      'data.newDocument': '新建文档',
+      'data.newRow': '新建行',
+      'data.noRows': '暂无数据',
+      'data.loading': '加载中…',
+      'data.noData': '暂无数据',
+      'data.noMatch': '没有匹配搜索条件的行。',
+      'data.empty': '此表为空。点击"新建行"添加一条数据。',
+      'data.emptyCollection': '此集合为空。点击"新建文档"添加一条数据。',
+      'data.fetching': '正在获取数据…',
+      'data.edit': '编辑',
+      'data.delete': '删除',
+      'data.showing': '显示 {from}–{to}，共 {total} 条',
+      'data.firstPage': '第一页',
+      'data.prevPage': '上一页',
+      'data.nextPage': '下一页',
+      'data.lastPage': '最后一页',
+      'data.pageOf': '第 {page} / {total} 页',
+
+      'quick.title': '快捷操作',
+      'quick.sortColDesc': '按列排序 ↓',
+      'quick.sortColAsc': '按列排序 ↑',
+      'quick.firstN': '前',
+      'quick.firstNRows': '行',
+      'quick.apply': '应用',
+      'quick.clear': '清除筛选',
+      'quick.newestFirst': '最新优先',
+      'quick.oldestFirst': '最早优先',
+      'quick.selectColumn': '选择列…',
+
+      'structure.noTableTitle': '未选择表',
+      'structure.noTableSub': '选择一个表以查看其结构。',
+      'structure.noSchemaTitle': '未加载结构',
+      'structure.noSchemaSub': '请尝试刷新。',
+      'structure.rowCount': '{n} 行',
+      'structure.columns': '列（{n}）',
+      'structure.docFields': '文档字段（{n}）',
+      'structure.indexes': '索引（{n}）',
+      'structure.ddl': 'DDL',
+      'structure.col.hash': '#',
+      'structure.col.name': '名称',
+      'structure.col.type': '类型',
+      'structure.col.null': '可空',
+      'structure.col.key': '键',
+      'structure.col.default': '默认值',
+      'structure.notNull': 'NOT NULL',
+      'structure.null': 'NULL',
+      'structure.pk': 'PK',
+      'structure.unique': 'UNIQUE',
+      'structure.partial': 'PARTIAL',
+      'structure.nullable': '可为空',
+      'structure.required': '必填',
+      'structure.eg': '示例：',
+      'structure.anyType': '任意',
+
+      'query.placeholder': "SELECT * FROM ...\n\n提示：使用 json_extract(Value, '$.Name') 查询 SoloDB 文档字段。",
+      'query.run': '运行',
+      'query.pressToRun': '按 ',
+      'query.toRun': ' 运行',
+      'query.error': '错误',
+      'query.rows': ' 行',
+      'query.affected': ' 受影响',
+      'query.duration': ' 耗时',
+      'query.empty': '运行查询以在此查看结果。',
+      'query.executed': '查询已执行，未返回结果集。',
+      'query.openFirst': '请先打开一个数据库。',
+      'query.sqlEmpty': 'SQL 不能为空。',
+      'snippet.select': 'SELECT *',
+      'snippet.count': '计数',
+      'snippet.solodbField': 'SoloDB 字段',
+      'snippet.schema': '结构',
+      'snippet.tables': '所有表',
+
+      'info.noDatabaseTitle': '未打开数据库',
+      'info.noDatabaseSub': '打开一个数据库以查看其信息。',
+      'info.solodb': 'SoloDB',
+      'info.plainSqlite': '普通 SQLite',
+      'info.solodbVersion': 'SoloDB v{n}',
+      'info.sqliteVersion': 'SQLite {n}',
+      'info.stat.fileSize': '文件大小',
+      'info.stat.tables': '表数量',
+      'info.stat.collections': '集合数量',
+      'info.stat.totalRows': '总行数',
+      'info.sub.collections': '{n} 个集合',
+      'info.sub.solodbDocs': 'SoloDB 文档',
+      'info.sub.acrossAll': '所有表合计',
+      'info.collections': '集合（{n}）',
+      'info.tables': '表（{n}）',
+      'info.internal': 'SoloDB 内部表（{n}）',
+      'info.pragmas': 'SQLite Pragma（{n}）',
+      'info.noCollections': '无集合',
+      'info.noTables': '无普通表',
+      'info.about': '关于 SoloDB',
+      'info.aboutSolodb': '此数据库是 SoloDB 存储 — .NET 对象以 JSONB 文档形式持久化在 SQLite 中。每个集合包含 Id、Value（JSONB）和 Metadata（JSONB）三列。',
+      'info.aboutSqlite': '这是一个普通的 SQLite 数据库文件。你仍可浏览表并运行 SQL — SoloDB 特性（文档展开、json_extract 代码片段）在 SoloDB 集合上效果最佳。',
+      'info.readDocs': '阅读 SoloDB 文档',
+
+      'open.title': '打开数据库',
+      'open.tab.files': '文件',
+      'open.tab.recent': '最近',
+      'open.tab.path': '路径',
+      'open.tab.browse': '本地浏览',
+      'open.files.hint': '点击文件以打开。可在下方上传或新建文件。',
+      'open.dropzone.pre': '将数据库文件拖到此处，或',
+      'open.dropzone.link': '浏览',
+      'open.loading': '加载中…',
+      'open.noFiles': '暂无数据库文件。请在上方上传，或从"路径"标签页新建。',
+      'open.noRecent': '暂无最近连接。',
+      'open.lastOpened': ' · 上次打开于 ',
+      'open.unknown': '未知',
+      'open.deleteFileTitle': '删除文件',
+      'open.deleteFileConfirm': '确认删除 "{name}"？\n此操作会从服务器永久移除该文件。',
+      'open.deleteRecentTitle': '从最近列表移除',
+      'open.pathLabel': '数据库文件名或绝对路径',
+      'open.pathPlaceholder': 'mydb.db 或 /绝对/路径/至/文件.db',
+      'open.pathHint': '相对路径会基于应用的 databases/ 目录解析。',
+      'open.createLabel': '新建数据库（可选）',
+      'open.createPlaceholder': 'new-database.db',
+      'open.createHint': '如果文件不存在，将会自动创建。',
+      'open.cancel': '取消',
+      'open.open': '打开',
+      'open.enterPath': '请输入路径或文件名。',
+
+      'browse.hint': '浏览本地文件系统，直接按路径打开数据库（无需上传）。',
+      'browse.up': '上一级',
+      'browse.empty': '此文件夹为空。',
+      'browse.noDbFiles': '此文件夹中没有数据库文件。',
+      'browse.errorTitle': '无法读取文件夹',
+      'browse.parent': '上一级目录',
+      'browse.openFile': '打开此数据库',
+      'browse.openFolder': '打开文件夹',
+      'browse.sizeLabel': '大小',
+      'browse.breadcrumb': '路径：',
+      'browse.home': '主目录',
+      'browse.loading': '加载中…',
+
+      'newtable.openFirst': '请先打开一个数据库。',
+      'newtable.title': '新建表 / 集合',
+      'newtable.solodb.title': 'SoloDB 集合',
+      'newtable.solodb.desc': '文档存储。每行是一个保存在 Value（JSONB）列中的 JSON 文档。Id 和 Metadata 列会自动添加。',
+      'newtable.regular.title': '普通表',
+      'newtable.regular.desc': '带自定义列和类型的普通 SQLite 表。适用于关系型数据。',
+      'newtable.nameLabel': '名称',
+      'newtable.namePlaceholder': '如 Customer 或 orders',
+      'newtable.cancel': '取消',
+      'newtable.create': '创建',
+      'newtable.noteSolodb': 'SoloDB 集合使用固定结构：Id（INTEGER PRIMARY KEY）、Value（JSONB）和 Metadata（JSONB）。只需提供名称。',
+      'newtable.noteRegular': '在下方定义列。SQLite 类型灵活 — 常用类型：INTEGER、TEXT、REAL、BLOB、NUMERIC。',
+      'newtable.columns': '列',
+      'newtable.addColumn': '添加列',
+      'newtable.colNamePlaceholder': '列名',
+      'newtable.pk': 'PK',
+      'newtable.nn': 'NN',
+      'newtable.removeColumn': '移除列',
+      'newtable.enterName': '请输入名称。',
+      'newtable.addCol': '请至少添加一列。',
+      'newtable.createdCollection': '已创建集合 "{name}"。',
+      'newtable.createdTable': '已创建表 "{name}"。',
+
+      'edit.editDocument': '编辑文档',
+      'edit.editRow': '编辑行',
+      'edit.newDocument': '新建文档',
+      'edit.newRow': '新建行',
+      'edit.titleSep': ' — ',
+      'edit.tabValue': '值',
+      'edit.tabMetadata': '元数据',
+      'edit.valueHint': '编辑 JSON 文档。它将以 JSONB 形式保存在 Value 列。',
+      'edit.valueTip': "提示：在 SQL 中使用 json_extract(Value, '$.field') 查询这些字段。",
+      'edit.metaHint': '可选的元数据 JSON。保存在 Metadata 列。',
+      'edit.cancel': '取消',
+      'edit.save': '保存',
+      'edit.insert': '插入',
+      'edit.valueInvalid': 'Value 不是有效的 JSON：',
+      'edit.metaInvalid': 'Metadata 不是有效的 JSON：',
+      'edit.docUpdated': '文档已更新。',
+      'edit.docInserted': '文档已插入。',
+      'edit.rowUpdated': '行已更新。',
+      'edit.rowInserted': '行已插入。',
+      'edit.schemaNotLoaded': '结构未加载，请重新选择该表。',
+      'edit.close': '关闭',
+      'edit.notNull': 'NOT NULL',
+      'edit.pk': 'PK',
+      'edit.colHintDefault': '{type} · 默认值：{default}',
+      'edit.defaultDoc': '{ Name: "", Email: "" }',
+
+      'confirm.deleteRowTitle': '删除行？',
+      'confirm.deleteRowText': '确定要删除此行吗？',
+      'confirm.deleteRowSub': '此操作无法撤销。',
+      'confirm.cancel': '取消',
+      'confirm.delete': '删除',
+      'confirm.rowDeleted': '行已删除。',
+      'confirm.dropTitle': '删除 {kind}？',
+      'confirm.dropPrefix': '确认删除 "',
+      'confirm.dropSuffix': '"？',
+      'confirm.dropSub': '这将永久删除该 {kind} 及其全部 {n} 行。请输入表名以确认。',
+      'confirm.dropPlaceholder': '输入表名以确认',
+      'confirm.drop': '删除',
+      'confirm.nameMismatch': '名称不匹配。',
+      'confirm.dropped': '已删除 "{name}"。',
+
+      'toast.success': '成功',
+      'toast.error': '错误',
+      'toast.opened': '已打开 {name}',
+      'toast.solodbDb': 'SoloDB 数据库',
+      'toast.sqliteDb': 'SQLite 数据库',
+      'toast.failedOpen': '打开数据库失败',
+      'toast.deleted': '已删除 {name}',
+      'toast.deleteFailed': '删除失败：',
+      'toast.removedRecent': '已从最近列表移除 "{name}"。',
+      'toast.uploadedN': '已上传 {n} 个文件。',
+      'toast.uploadFailed': '上传失败：',
+      'toast.refreshFailed': '刷新失败',
+      'toast.failedLoadData': '加载数据失败',
+      'toast.networkError': '网络错误：',
+
+      'kind.solodbCollection': 'SoloDB 集合',
+      'kind.solodbInternal': 'SoloDB 内部表',
+      'kind.regular': '表',
+      'kind.collectionLower': '集合',
+      'kind.tableLower': '表',
+
+      'cell.null': 'NULL',
+      'cell.true': 'true',
+      'cell.false': 'false',
+
+      'dbSummary.stats': '{tables} 个表 · {rows} 行 · {size}',
+    },
+  };
+
+  function detectLang() {
+    try {
+      const saved = localStorage.getItem('solodb-lang');
+      if (saved === 'en' || saved === 'zh') return saved;
+    } catch {}
+    const nav = (navigator.language || 'en').toLowerCase();
+    return nav.startsWith('zh') ? 'zh' : 'en';
+  }
+
+  // t(key, params?) — translate a key with optional {placeholder} substitution.
+  // Falls back to English, then to the key itself if missing.
+  function t(key, params) {
+    const dict = I18N[state.lang] || I18N.en;
+    let s = dict[key];
+    if (s === undefined) s = I18N.en[key];
+    if (s === undefined) return key;
+    if (params) {
+      for (const k in params) {
+        s = s.split('{' + k + '}').join(String(params[k]));
+      }
+    }
+    return s;
+  }
+
+  function applyLang() {
+    document.documentElement.setAttribute('lang', state.lang);
+    try { localStorage.setItem('solodb-lang', state.lang); } catch {}
+    document.title = t('app.title');
+    const brandEl = document.getElementById('brand-text');
+    if (brandEl) brandEl.textContent = t('app.title');
+    const hintEl = document.getElementById('statusbar-hint');
+    if (hintEl) hintEl.textContent = t('app.footerHint');
+  }
+
+  function toggleLang() {
+    state.lang = state.lang === 'en' ? 'zh' : 'en';
+    applyLang();
+    renderTopbar();
+    renderStatusbar();
+    if (state.dbInfo) {
+      renderMainApp();
+    } else {
+      renderWelcome();
+    }
+  }
+
+  /* ---------- 1. State ---------- */
+  const state = {
+    theme: localStorage.getItem('solodb-theme') || 'light',
+    lang: detectLang(),
+    connections: [],
+    files: [],
+    activeDb: null,          // absolute path
+    dbInfo: null,            // DatabaseInfo
+    tables: [],              // TableSummary[]
+    selectedTable: null,     // name
+    selectedSchema: null,    // TableSchema
+    selectedKind: null,      // for caching
+    data: null,              // PageResult
+    dataParams: { page: 1, pageSize: 50, sort: null, order: 'asc', search: '' },
+    activeTab: 'data',
+    sidebarFilter: '',
+    collapsedSections: { collections: false, tables: false, internal: true },
+    query: { sql: '', result: null, error: null, loading: false },
+    loading: { data: false, schema: false, tables: false, info: false },
+  };
+
+  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 200];
+  const DOCS_URL = 'https://www.solodb.org/docs.html';
+
+  /* ---------- 2. API client ---------- */
+  async function api(path, options = {}) {
+    const opts = { headers: {}, ...options };
+    if (opts.body && typeof opts.body !== 'string') {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(opts.body);
+    }
+    let res;
+    try {
+      res = await fetch(path, opts);
+    } catch (e) {
+      throw new Error(t('toast.networkError') + e.message);
+    }
+    const text = await res.text();
+    let data = null;
+    if (text) {
+      try { data = JSON.parse(text); }
+      catch { data = { error: text }; }
+    }
+    if (!res.ok) {
+      const msg = (data && data.error) || `HTTP ${res.status}`;
+      const err = new Error(msg);
+      err.status = res.status;
+      err.body = data;
+      throw err;
+    }
+    return data;
+  }
+
+  const API = {
+    listConnections: () => api('/api/connections'),
+    addConnection: (body) => api('/api/connections', { method: 'POST', body }),
+    deleteConnection: (id) => api(`/api/connections/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    listFiles: () => api('/api/database/files'),
+    uploadFile: (file) => {
+      const fd = new FormData();
+      fd.append('file', file);
+      return fetch('/api/database/files/upload', { method: 'POST', body: fd })
+        .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(new Error(j.error || 'Upload failed'))));
+    },
+    deleteFile: (name) => api(`/api/database/files/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+    openDatabase: (path, create) => api('/api/database/open', { method: 'POST', body: { path, create } }),
+    getDatabaseInfo: (path) => api('/api/database/info?db=' + encodeURIComponent(path)),
+    listTables: (path) => api('/api/database/tables?db=' + encodeURIComponent(path)),
+    createTable: (body) => api('/api/database/tables', { method: 'POST', body }),
+    dropTable: (table, db) => api(`/api/database/tables/${encodeURIComponent(table)}?db=${encodeURIComponent(db)}`, { method: 'DELETE' }),
+    getSchema: (table, db) => api(`/api/database/tables/${encodeURIComponent(table)}/schema?db=${encodeURIComponent(db)}`),
+    getData: (table, db, params) => {
+      const q = new URLSearchParams({ db, ...params });
+      return api(`/api/database/tables/${encodeURIComponent(table)}/data?${q}`);
+    },
+    insertRow: (table, db, body) => api(`/api/database/tables/${encodeURIComponent(table)}/data?db=${encodeURIComponent(db)}`, { method: 'POST', body }),
+    updateRow: (table, db, body) => api(`/api/database/tables/${encodeURIComponent(table)}/data?db=${encodeURIComponent(db)}`, { method: 'PATCH', body }),
+    deleteRow: (table, db, body) => api(`/api/database/tables/${encodeURIComponent(table)}/data?db=${encodeURIComponent(db)}`, { method: 'DELETE', body }),
+    runQuery: (db, sql) => api('/api/database/query', { method: 'POST', body: { db, sql } }),
+    browsePath: (dir) => api('/api/database/browse' + (dir ? ('?dir=' + encodeURIComponent(dir)) : '')),
+  };
+
+  /* ---------- 3. Utilities ---------- */
+  function formatBytes(bytes) {
+    if (bytes == null) return '—';
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(i < 2 ? 0 : 2))} ${sizes[i]}`;
+  }
+  function formatNumber(n) {
+    if (n == null) return '—';
+    return n.toLocaleString();
+  }
+  function kindLabel(kind) {
+    switch (kind) {
+      case 'solodb-collection': return t('kind.solodbCollection');
+      case 'solodb-internal': return t('kind.solodbInternal');
+      case 'regular': return t('kind.regular');
+      default: return kind;
+    }
+  }
+  function kindLabelLower(kind) {
+    switch (kind) {
+      case 'solodb-collection': return t('kind.collectionLower');
+      case 'solodb-internal': return t('kind.solodbInternal');
+      case 'regular': return t('kind.tableLower');
+      default: return kind;
+    }
+  }
+  function kindBadgeClass(kind) {
+    switch (kind) {
+      case 'solodb-collection': return 'badge-collection';
+      case 'solodb-internal': return 'badge-internal';
+      case 'regular': return 'badge-regular';
+      default: return 'badge-regular';
+    }
+  }
+  function kindIconClass(kind) {
+    switch (kind) {
+      case 'solodb-collection': return 'icon-collection';
+      case 'solodb-internal': return 'icon-internal';
+      case 'regular': return 'icon-regular';
+      default: return 'icon-regular';
+    }
+  }
+  function classify(v) {
+    if (v === null || v === undefined) return 'null';
+    if (typeof v === 'boolean') return 'boolean';
+    if (typeof v === 'number') return 'number';
+    if (typeof v === 'string') return 'string';
+    if (Array.isArray(v)) return 'array';
+    if (typeof v === 'object') return 'object';
+    return 'string';
+  }
+  function kindOf(v) {
+    if (v === null || v === undefined) return 'null';
+    if (Array.isArray(v)) return 'array';
+    return typeof v;
+  }
+
+  // h() — minimal hyperscript-like DOM builder.
+  // h('div.class1.class2', {attr: val}, [children]) or h('div', 'text')
+  function h(tag, attrs, children) {
+    let tagname = tag, classes = [], id = null;
+    // Parse tag string: "tagname.class1.class2#id" or ".class#id" (defaults to div)
+    const hashIdx = tag.indexOf('#');
+    if (hashIdx >= 0) {
+      const after = tag.slice(hashIdx + 1);
+      // id runs until the next '.' or end
+      const dotAfter = after.indexOf('.');
+      if (dotAfter >= 0) { id = after.slice(0, dotAfter); tag = tag.slice(0, hashIdx) + after.slice(dotAfter); }
+      else { id = after; tag = tag.slice(0, hashIdx); }
+    }
+    const parts = tag.split('.');
+    if (parts.length > 1) {
+      tagname = parts[0] || 'div';
+      classes = parts.slice(1);
+    } else if (parts[0] === '') {
+      tagname = 'div';
+    }
+    const el = document.createElement(tagname);
+    if (classes.length) el.className = classes.join(' ');
+    if (id) el.id = id;
+    if (attrs) {
+      for (const k in attrs) {
+        const v = attrs[k];
+        if (v == null || v === false) continue;
+        if (k === 'class' && typeof v === 'string') el.className += ' ' + v;
+        else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+        else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
+        else if (k === 'html') el.innerHTML = v;
+        else if (v === true) el.setAttribute(k, '');
+        else el.setAttribute(k, v);
+      }
+    }
+    // For form fields, set value via property to ensure correct rendering.
+    if (attrs && Object.prototype.hasOwnProperty.call(attrs, 'value') && (tagname === 'input' || tagname === 'textarea' || tagname === 'select')) {
+      el.value = attrs.value == null ? '' : attrs.value;
+    }
+    appendChildren(el, children);
+    return el;
+  }
+  function appendChildren(el, children) {
+    if (children == null) return;
+    if (Array.isArray(children)) {
+      children.forEach(c => appendChildren(el, c));
+    } else if (children instanceof Node) {
+      el.appendChild(children);
+    } else if (typeof children === 'string' || typeof children === 'number') {
+      el.appendChild(document.createTextNode(String(children)));
+    }
+  }
+  function elclear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
+
+  // SVG icons (stroke="currentColor", sized via .icon-svg)
+  const ICON = {
+    refresh: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>',
+    folder: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+    folderOpen: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg>',
+    upload: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>',
+    clock: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+    fileText: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>',
+    file: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>',
+    database: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg>',
+    plus: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
+    sun: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>',
+    moon: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>',
+    x: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+    chevronRight: '<svg class="icon-svg sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
+    chevronDown: '<svg class="icon-svg sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+    chevronUp: '<svg class="icon-svg sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>',
+    chevronsLeft: '<svg class="icon-svg sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>',
+    chevronLeft: '<svg class="icon-svg sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
+    chevronRight2: '<svg class="icon-svg sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
+    chevronsRight: '<svg class="icon-svg sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>',
+    trash: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>',
+    edit: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>',
+    play: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>',
+    arrowUp: '<svg class="icon-svg sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>',
+    arrowDown: '<svg class="icon-svg sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+    table: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/></svg>',
+    code: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+    info: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+    book: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+    zap: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+    layers: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>',
+    search: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
+    check: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+    alert: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>',
+    external: '<svg class="icon-svg sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>',
+    key: '<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>',
+  };
+
+  /* ---------- Toast system ---------- */
+  function toast(opts) {
+    if (typeof opts === 'string') opts = { msg: opts };
+    const { type = 'info', title, msg, duration = 4000 } = opts;
+    const root = document.getElementById('toast-root');
+    const t = h(`.toast.${type}`, null, [
+      h('.toast-icon', { html: type === 'success' ? ICON.check : type === 'error' ? ICON.alert : ICON.info }),
+      h('.toast-body', null, [
+        title ? h('.toast-title', null, title) : null,
+        msg ? h('.toast-msg', null, msg) : null,
+      ]),
+      h('.toast-close', { html: ICON.x, onclick: () => t.remove() }),
+    ]);
+    root.appendChild(t);
+    if (duration > 0) setTimeout(() => { if (t.parentNode) t.remove(); }, duration);
+  }
+  const toastSuccess = (msg, title) => toast({ type: 'success', title: title || t('toast.success'), msg });
+  const toastError = (msg, title) => toast({ type: 'error', title: title || t('toast.error'), msg, duration: 6000 });
+  const toastInfo = (msg, title) => toast({ type: 'info', title, msg });
+
+  /* ---------- Theme ---------- */
+  function applyTheme() {
+    document.documentElement.setAttribute('data-theme', state.theme);
+    localStorage.setItem('solodb-theme', state.theme);
+  }
+  function toggleTheme() {
+    state.theme = state.theme === 'light' ? 'dark' : 'light';
+    applyTheme();
+    renderTopbar();
+    renderStatusbar();
+  }
+
+  /* ---------- 4. JSON tree ---------- */
+  // Build a DOM tree for a JSON value with type-colored values and indent guides.
+  function buildJsonTree(value, opts = {}) {
+    const wrap = h('.json-tree');
+    wrap.appendChild(jsonNode(null, value, 0, true, opts.expandDepth ?? 1));
+    return wrap;
+  }
+  function jsonNode(name, value, depth, isLast, expandDepth) {
+    const kind = kindOf(value);
+    const isContainer = kind === 'array' || kind === 'object';
+    const guide = '│  '.repeat(depth);
+    const node = h('.node');
+
+    if (!isContainer) {
+      // Leaf node
+      node.appendChild(h('.guide', null, guide));
+      if (name !== null) {
+        node.appendChild(h('.key', null, JSON.stringify(name)));
+        node.appendChild(h('.colon', null, ': '));
+      }
+      const valClass = `val-${kind === 'bigint' ? 'number' : kind}`;
+      const valText = kind === 'null' ? 'null'
+                    : kind === 'string' ? JSON.stringify(value)
+                    : String(value);
+      node.appendChild(h(`.${valClass}`, null, valText));
+      if (!isLast) node.appendChild(h('.comma', null, ','));
+      return node;
+    }
+
+    // Container
+    const entries = kind === 'array'
+      ? value.map((v, i) => [String(i), v])
+      : Object.entries(value);
+
+    // Header (toggle-able)
+    const header = h('.node', { style: { cursor: 'pointer' } });
+    header.appendChild(h('.guide', null, guide));
+    const chevron = h('.chevron', { html: ICON.chevronDown });
+    header.appendChild(chevron);
+    if (name !== null) {
+      header.appendChild(h('.key', null, JSON.stringify(name)));
+      header.appendChild(h('.colon', null, ': '));
+    }
+    header.appendChild(h('.val-container', null, kind === 'array' ? '[' : '{'));
+    const previewSpan = h('.preview');
+    if (depth >= expandDepth) {
+      chevron.innerHTML = ICON.chevronRight;
+      previewSpan.textContent = previewOf(value, kind) + (kind === 'array' ? ' ]' : ' }') + (isLast ? '' : ',');
+      header.appendChild(previewSpan);
+    } else {
+      // Will show children; preview hidden
+    }
+    node.appendChild(header);
+
+    const childrenWrap = h('div');
+    if (depth >= expandDepth) {
+      childrenWrap.style.display = 'none';
+    }
+    entries.forEach(([k, v], i) => {
+      childrenWrap.appendChild(jsonNode(k, v, depth + 1, i === entries.length - 1, expandDepth));
+    });
+    // Closing bracket
+    const close = h('.node');
+    close.appendChild(h('.guide', null, guide));
+    close.appendChild(h('.val-container', null, kind === 'array' ? ']' : '}'));
+    if (!isLast) close.appendChild(h('.comma', null, ','));
+    childrenWrap.appendChild(close);
+    node.appendChild(childrenWrap);
+
+    header.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = childrenWrap.style.display !== 'none';
+      childrenWrap.style.display = isOpen ? 'none' : '';
+      chevron.innerHTML = isOpen ? ICON.chevronRight : ICON.chevronDown;
+      previewSpan.style.display = isOpen ? '' : 'none';
+      if (isOpen) {
+        previewSpan.textContent = previewOf(value, kind) + (kind === 'array' ? ' ]' : ' }') + (isLast ? '' : ',');
+      }
+    });
+
+    return node;
+  }
+  function previewOf(value, kind) {
+    if (kind === 'array') return `Array(${value.length})`;
+    if (kind === 'object') return `{${Object.keys(value).length} keys}`;
+    return '';
+  }
+
+  /* ---------- 5. Cell renderer ---------- */
+  // Renders a value into a table cell with type-aware formatting.
+  function renderCell(value, opts = {}) {
+    const kind = classify(value);
+    if (kind === 'null') {
+      return h('.cell-null', null, t('cell.null'));
+    }
+    if (kind === 'boolean') {
+      return h(`.cell-bool ${value ? 'true' : 'false'}`, null, value ? t('cell.true') : t('cell.false'));
+    }
+    if (kind === 'number') {
+      return h('.cell-number', null, String(value));
+    }
+    if (kind === 'string') {
+      const s = value;
+      const max = opts.maxChars || 80;
+      if (s.length <= max) {
+        return h('.cell-string', { title: s }, s);
+      }
+      const display = s.slice(0, max) + '…';
+      const span = h('.cell-string.clickable', null, display);
+      span.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showPopover(span, () => h('pre', null, s));
+      });
+      return span;
+    }
+    // object / array — show "{…}" with JSON tree popover
+    const inline = JSON.stringify(value);
+    const display = inline.length > 80 ? inline.slice(0, 80) + '…' : inline;
+    const marker = kind === 'array' ? `[${value.length}]` : '{…}';
+    const span = h('.cell-json', null, [
+      h('.marker', null, marker),
+      h('span', null, display),
+    ]);
+    span.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showPopover(span, () => h('div', null, [
+        buildJsonTree(value, { expandDepth: 1 }),
+        h('pre.raw-pre', null, JSON.stringify(value, null, 2)),
+      ]));
+    });
+    return span;
+  }
+
+  /* ---------- Popover ---------- */
+  let activePopover = null;
+  function showPopover(anchor, contentFn) {
+    closePopover();
+    const pop = h('.popover');
+    const content = contentFn();
+    if (Array.isArray(content)) content.forEach(c => pop.appendChild(c));
+    else pop.appendChild(content);
+    document.getElementById('popover-root').appendChild(pop);
+    // Position
+    const rect = anchor.getBoundingClientRect();
+    const popRect = pop.getBoundingClientRect();
+    let left = rect.left;
+    let top = rect.bottom + 4;
+    if (left + popRect.width > window.innerWidth - 8) {
+      left = window.innerWidth - popRect.width - 8;
+    }
+    if (left < 8) left = 8;
+    if (top + popRect.height > window.innerHeight - 8) {
+      top = rect.top - popRect.height - 4;
+      if (top < 8) top = 8;
+    }
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+    activePopover = pop;
+    // Close on outside click
+    setTimeout(() => {
+      document.addEventListener('click', closePopover, { once: true });
+      document.addEventListener('keydown', escClosePopover);
+    }, 0);
+  }
+  function closePopover() {
+    if (activePopover) {
+      activePopover.remove();
+      activePopover = null;
+    }
+    document.removeEventListener('keydown', escClosePopover);
+  }
+  function escClosePopover(e) { if (e.key === 'Escape') closePopover(); }
+
+  /* ---------- 6. Welcome screen ---------- */
+  function renderWelcome() {
+    const main = document.getElementById('main');
+    elclear(main);
+    const wrap = h('.welcome', null, h('.welcome-inner', null, [
+      h('.welcome-hero', null, [
+        h('.logo-big', null, 'S'),
+        h('h1', null, t('welcome.heroTitle')),
+        h('p', null, t('welcome.heroSubtitle')),
+        h('.cta-row', null, [
+          h('button.btn.btn-primary', { onclick: () => openOpenModal() }, [
+            h('span', { html: ICON.folderOpen }), t('topbar.openDatabase'),
+          ]),
+        ]),
+      ]),
+      h('.section-title', null, t('welcome.demoDatabases')),
+      renderDemoList(),
+      h('.section-title', null, t('welcome.features')),
+      h('.feature-grid', null, [
+        h('.feature-card', null, [
+          h('.icon-wrap', { html: ICON.layers }),
+          h('h3', null, t('welcome.feature.autoflatten.title')),
+          h('p', null, t('welcome.feature.autoflatten.desc')),
+        ]),
+        h('.feature-card', null, [
+          h('.icon-wrap', { html: ICON.code }),
+          h('h3', null, t('welcome.feature.sql.title')),
+          h('p', null, t('welcome.feature.sql.desc')),
+        ]),
+        h('.feature-card', null, [
+          h('.icon-wrap', { html: ICON.table }),
+          h('h3', null, t('welcome.feature.edit.title')),
+          h('p', null, t('welcome.feature.edit.desc')),
+        ]),
+        h('.feature-card', null, [
+          h('.icon-wrap', { html: ICON.info }),
+          h('h3', null, t('welcome.feature.schema.title')),
+          h('p', null, t('welcome.feature.schema.desc')),
+        ]),
+      ]),
+      h('.explainer', null, [
+        h('h2', null, t('welcome.explainer.title')),
+        h('p', null, t('welcome.explainer.p1')),
+        h('p', null, t('welcome.explainer.p2')),
+        h('a.link', { href: DOCS_URL, target: '_blank', rel: 'noopener' }, [
+          t('welcome.explainer.docsLink'), ' ', h('span', { html: ICON.external }),
+        ]),
+      ]),
+    ]));
+    main.appendChild(wrap);
+  }
+
+  function renderDemoList() {
+    const wrap = h('.demo-list');
+    if (!state.files.length) {
+      wrap.appendChild(h('.empty-list', null, t('welcome.noDemoFiles')));
+      return wrap;
+    }
+    state.files.forEach(f => {
+      // We don't know if it's SoloDB until we open it; show as SQLite-ish by default.
+      const card = h('.demo-card', { onclick: () => openDatabaseByPath(f.path) }, [
+        h('.icon.sqlite', { html: ICON.database }),
+        h('.info', null, [
+          h('.name', null, f.name),
+          h('.meta', null, `${formatBytes(f.sizeBytes)} · ${new Date(f.modified).toLocaleString()}`),
+        ]),
+      ]);
+      wrap.appendChild(card);
+    });
+    return wrap;
+  }
+
+  /* ---------- 7. Main app shell ---------- */
+  function renderMainApp() {
+    const main = document.getElementById('main');
+    elclear(main);
+    const sidebar = buildSidebar();
+    const content = h('.content');
+    main.appendChild(sidebar);
+    main.appendChild(content);
+    renderContent();
+  }
+
+  function renderTopbar() {
+    // DB summary
+    const slot = document.getElementById('db-summary-slot');
+    elclear(slot);
+    if (state.dbInfo) {
+      const info = state.dbInfo;
+      slot.appendChild(h('.db-summary', null, [
+        h('span.name', { title: info.path }, info.fileName),
+        h(`span.badge ${info.isSolodb ? 'badge-solodb' : 'badge-sqlite'}`, null, [
+          h('span.badge-dot'), info.isSolodb ? t('info.solodb') : t('info.plainSqlite'),
+        ]),
+        h('span.stats', null,
+          t('dbSummary.stats', { tables: info.tableCount, rows: formatNumber(info.totalRows), size: formatBytes(info.sizeBytes) })),
+      ]));
+    }
+    // Actions
+    const acts = document.getElementById('topbar-actions');
+    elclear(acts);
+    if (state.dbInfo) {
+      acts.appendChild(h('button.btn.btn-icon.btn-ghost', {
+        title: t('topbar.refresh'), onclick: () => refreshAll(),
+      }, h('span', { html: ICON.refresh })));
+    }
+    acts.appendChild(h('button.btn', { onclick: () => openOpenModal() }, [
+      h('span', { html: ICON.folderOpen }), t('topbar.openDatabase'),
+    ]));
+    acts.appendChild(h('a.btn.btn-ghost.btn-icon', {
+      href: DOCS_URL, target: '_blank', rel: 'noopener', title: t('topbar.docsTooltip'),
+    }, h('span', { html: ICON.book })));
+    acts.appendChild(h('button.btn.btn-icon.btn-ghost.btn-lang', {
+      title: state.lang === 'en' ? '中文' : 'English',
+      onclick: toggleLang,
+    }, state.lang === 'en' ? '中' : 'EN'));
+    acts.appendChild(h('button.btn.btn-icon.btn-ghost', {
+      title: state.theme === 'light' ? t('topbar.darkMode') : t('topbar.lightMode'),
+      onclick: toggleTheme,
+    }, h('span', { html: state.theme === 'light' ? ICON.moon : ICON.sun })));
+  }
+
+  function buildSidebar() {
+    const sidebar = h('.sidebar');
+    const head = h('.sidebar-head');
+    head.appendChild(h('input.search-input', {
+      type: 'text', placeholder: t('sidebar.filterPlaceholder'),
+      value: state.sidebarFilter,
+      oninput: (e) => {
+        state.sidebarFilter = e.target.value;
+        renderSidebarList();
+      },
+    }));
+    head.appendChild(h('button.btn.btn-primary.btn-sm', {
+      onclick: () => openNewTableModal(),
+    }, [
+      h('span', { html: ICON.plus }), t('sidebar.newTable'),
+    ]));
+    sidebar.appendChild(head);
+
+    const list = h('.sidebar-list#sidebar-list');
+    sidebar.appendChild(list);
+    renderSidebarList(list);
+    return sidebar;
+  }
+
+  function renderSidebarList(explicitList) {
+    const list = explicitList || document.getElementById('sidebar-list');
+    if (!list) return;
+    elclear(list);
+
+    if (!state.tables.length) {
+      list.appendChild(h('.sidebar-empty', null, t('sidebar.empty')));
+      return;
+    }
+
+    const filter = state.sidebarFilter.toLowerCase().trim();
+    const groups = {
+      'solodb-collection': [],
+      'regular': [],
+      'solodb-internal': [],
+    };
+    state.tables.forEach(t => {
+      if (filter && !t.name.toLowerCase().includes(filter)) return;
+      groups[t.kind]?.push(t);
+    });
+
+    list.appendChild(buildSidebarSection('collections', groups['solodb-collection'], 'collection'));
+    list.appendChild(buildSidebarSection('tables', groups['regular'], 'regular'));
+    list.appendChild(buildSidebarSection('internal', groups['solodb-internal'], 'internal'));
+  }
+
+  function buildSidebarSection(key, items, iconKind) {
+    const label = t('sidebar.section.' + key);
+    const section = h(`.sidebar-section${state.collapsedSections[key] ? '.collapsed' : ''}`);
+    section.id = `section-${key}`;
+    const head = h('.sidebar-section-head', { onclick: () => {
+      state.collapsedSections[key] = !state.collapsedSections[key];
+      section.classList.toggle('collapsed');
+    }}, [
+      h('.chevron', { html: ICON.chevronRight }),
+      h('span', null, label),
+      h('span.count', null, String(items.length)),
+    ]);
+    section.appendChild(head);
+    const body = h('.sidebar-section-body');
+    items.forEach(t => {
+      const isActive = state.selectedTable === t.name;
+      const item = h(`.sidebar-item${isActive ? '.active' : ''}`, {
+        onclick: () => selectTable(t.name),
+        oncontextmenu: (e) => {
+          e.preventDefault();
+          confirmDropTable(t);
+        },
+        title: t('sidebar.itemTitle', { name: t.name, kind: kindLabel(t.kind) }),
+      }, [
+        h(`.icon.${kindIconClass(t.kind)}`),
+        h('.name', null, t.name),
+        h('.rowcount', null, formatNumber(t.rowCount)),
+      ]);
+      body.appendChild(item);
+    });
+    if (!items.length) {
+      body.appendChild(h('.sidebar-empty', { style: { padding: '8px 12px' } },
+        state.sidebarFilter ? t('sidebar.noMatches') : t('sidebar.none')));
+    }
+    section.appendChild(body);
+    return section;
+  }
+
+  function renderContent() {
+    const content = document.querySelector('.content');
+    if (!content) return;
+    elclear(content);
+
+    // Tab bar
+    const tabbar = h('.tabbar');
+    const tabs = [
+      { id: 'data', label: t('tab.data'), disabled: !state.selectedTable },
+      { id: 'structure', label: t('tab.structure'), disabled: !state.selectedTable },
+      { id: 'query', label: t('tab.query'), disabled: false },
+      { id: 'info', label: t('tab.info'), disabled: false },
+    ];
+    tabs.forEach(t => {
+      const cls = `.tab${state.activeTab === t.id ? '.active' : ''}${t.disabled ? '.disabled' : ''}`;
+      const tab = h(cls, {
+        onclick: () => { if (!t.disabled) switchTab(t.id); },
+      }, t.label);
+      tabbar.appendChild(tab);
+    });
+    content.appendChild(tabbar);
+
+    // Panel container
+    const panel = h('.tab-panel');
+    content.appendChild(panel);
+
+    switch (state.activeTab) {
+      case 'data': renderDataTab(panel); break;
+      case 'structure': renderStructureTab(panel); break;
+      case 'query': renderQueryTab(panel); break;
+      case 'info': renderInfoTab(panel); break;
+    }
+  }
+
+  function switchTab(id) {
+    state.activeTab = id;
+    renderContent();
+  }
+
+  function renderStatusbar() {
+    document.getElementById('status-dot').className =
+      state.dbInfo ? 'dot connected' : 'dot';
+    document.getElementById('status-db').textContent =
+      state.dbInfo ? state.dbInfo.fileName : t('status.noDatabase');
+    document.getElementById('status-sqlite').textContent =
+      state.dbInfo ? `SQLite ${state.dbInfo.sqliteVersion}` : '';
+    document.getElementById('status-table').textContent =
+      state.selectedTable ? state.selectedTable : t('status.noTableSelected');
+    document.getElementById('status-rows').textContent =
+      state.data ? ` · ${formatNumber(state.data.total)}${t('status.rowsSuffix')}` : '';
+  }
+
+  /* ---------- 8. Data tab ---------- */
+  function renderDataTab(panel) {
+    if (!state.selectedTable) {
+      panel.appendChild(emptyState({
+        icon: ICON.table,
+        title: t('data.noTableTitle'),
+        sub: t('data.noTableSub'),
+      }));
+      return;
+    }
+
+    const tableMeta = state.tables.find(t => t.name === state.selectedTable);
+    const isSolodb = tableMeta?.kind === 'solodb-collection';
+
+    // Quick actions bar
+    panel.appendChild(buildQuickActionsBar(isSolodb));
+
+    // Toolbar (rebuilt only when switching tabs/tables — preserves search focus during loads)
+    const toolbar = h('.data-toolbar');
+    toolbar.appendChild(h('.title', null, [
+      h(`span.badge ${isSolodb ? 'badge-collection' : 'badge-regular'}`, null, kindLabel(tableMeta?.kind)),
+      h('span', null, state.selectedTable),
+      h('span', { style: { color: 'var(--text-muted)', fontWeight: '400' } },
+        `· ${t('data.rowCount', { n: formatNumber(tableMeta?.rowCount ?? 0) })}`),
+    ]));
+    toolbar.appendChild(h('.spacer'));
+
+    // Search (debounced) — preserve focus across re-renders by tagging it.
+    const search = h('input#data-search.table-search', {
+      type: 'text', placeholder: t('data.searchPlaceholder'), value: state.dataParams.search,
+      oninput: (e) => {
+        clearTimeout(search._t);
+        search._t = setTimeout(() => {
+          state.dataParams.search = e.target.value;
+          state.dataParams.page = 1;
+          loadData();
+        }, 350);
+      },
+    });
+    toolbar.appendChild(search);
+
+    // Page size
+    const sizeSelect = h('select.page-size-select', {
+      onchange: (e) => {
+        state.dataParams.pageSize = parseInt(e.target.value, 10);
+        state.dataParams.page = 1;
+        loadData();
+      },
+    });
+    PAGE_SIZE_OPTIONS.forEach(s => {
+      const opt = h('option', { value: s }, `${s}${t('data.pageSizeSuffix')}`);
+      if (s === state.dataParams.pageSize) opt.selected = true;
+      sizeSelect.appendChild(opt);
+    });
+    toolbar.appendChild(sizeSelect);
+
+    toolbar.appendChild(h('button.btn.btn-icon.btn-ghost', {
+      title: t('data.refresh'), onclick: () => loadData(),
+    }, h('span', { html: ICON.refresh })));
+
+    toolbar.appendChild(h('button.btn.btn-primary.btn-sm', {
+      onclick: () => openInsertModal(),
+    }, [
+      h('span', { html: ICON.plus }),
+      isSolodb ? t('data.newDocument') : t('data.newRow'),
+    ]));
+
+    panel.appendChild(toolbar);
+
+    // Grid wrap (updated by renderDataGrid)
+    panel.appendChild(h('.data-grid-wrap#data-grid-wrap'));
+    panel.appendChild(h('.data-footer#data-footer'));
+    renderDataGrid();
+  }
+
+  // Quick actions bar — one-click filters and sort shortcuts.
+  function buildQuickActionsBar(isSolodb) {
+    const bar = h('.quick-actions');
+    bar.appendChild(h('span.qa-label', null, t('quick.title')));
+
+    // Column sort selector
+    const colSelect = h('select.qa-select', { title: t('quick.selectColumn') });
+    const cols = (state.data && state.data.columns) || [];
+    colSelect.appendChild(h('option', { value: '' }, t('quick.selectColumn')));
+    cols.forEach(c => {
+      const opt = h('option', { value: c }, c);
+      if (state.dataParams.sort === c) opt.selected = true;
+      colSelect.appendChild(opt);
+    });
+    bar.appendChild(colSelect);
+
+    bar.appendChild(h('button.btn.btn-sm', {
+      title: t('quick.sortColAsc'),
+      onclick: () => {
+        const col = colSelect.value;
+        if (!col) return;
+        state.dataParams.sort = col;
+        state.dataParams.order = 'asc';
+        state.dataParams.page = 1;
+        loadData();
+        // reflect active state in toolbar sort arrows
+      },
+    }, [
+      h('span', { html: ICON.arrowUp }), t('quick.sortColAsc'),
+    ]));
+
+    bar.appendChild(h('button.btn.btn-sm', {
+      title: t('quick.sortColDesc'),
+      onclick: () => {
+        const col = colSelect.value;
+        if (!col) return;
+        state.dataParams.sort = col;
+        state.dataParams.order = 'desc';
+        state.dataParams.page = 1;
+        loadData();
+      },
+    }, [
+      h('span', { html: ICON.arrowDown }), t('quick.sortColDesc'),
+    ]));
+
+    bar.appendChild(h('.qa-divider'));
+
+    // Newest / Oldest first (SoloDB collections have an Id column)
+    bar.appendChild(h('button.btn.btn-sm.btn-ghost', {
+      title: t('quick.newestFirst'),
+      onclick: () => {
+        // Use 'Id' if present, otherwise first column
+        const target = cols.includes('Id') ? 'Id' : (cols[0] || null);
+        if (!target) return;
+        state.dataParams.sort = target;
+        state.dataParams.order = 'desc';
+        state.dataParams.page = 1;
+        loadData();
+      },
+    }, t('quick.newestFirst')));
+
+    bar.appendChild(h('button.btn.btn-sm.btn-ghost', {
+      title: t('quick.oldestFirst'),
+      onclick: () => {
+        const target = cols.includes('Id') ? 'Id' : (cols[0] || null);
+        if (!target) return;
+        state.dataParams.sort = target;
+        state.dataParams.order = 'asc';
+        state.dataParams.page = 1;
+        loadData();
+      },
+    }, t('quick.oldestFirst')));
+
+    bar.appendChild(h('.qa-divider'));
+
+    // First N rows — input + apply button
+    const nInput = h('input.qa-input', {
+      type: 'number', min: '1', step: '1', value: '100',
+      title: t('quick.firstN') + ' N ' + t('quick.firstNRows'),
+      onkeydown: (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          applyNBtn.click();
+        }
+      },
+    });
+    bar.appendChild(h('span.qa-static', null, t('quick.firstN')));
+    bar.appendChild(nInput);
+    bar.appendChild(h('span.qa-static', null, t('quick.firstNRows')));
+    const applyNBtn = h('button.btn.btn-sm', {
+      onclick: () => {
+        const n = parseInt(nInput.value, 10);
+        if (!n || n < 1) { toastError(t('quick.firstN') + ' N > 0'); return; }
+        // Use a custom page size: clamp to allowed range or pick the closest option
+        const supported = PAGE_SIZE_OPTIONS.includes(n);
+        if (supported) {
+          state.dataParams.pageSize = n;
+        } else {
+          // Use the largest available option that is >= n, or extend the options list dynamically.
+          // We support arbitrary sizes by pushing it into the page-size list at runtime.
+          if (!PAGE_SIZE_OPTIONS.includes(n)) PAGE_SIZE_OPTIONS.push(n);
+          PAGE_SIZE_OPTIONS.sort((a, b) => a - b);
+          state.dataParams.pageSize = n;
+        }
+        state.dataParams.page = 1;
+        // Rebuild the toolbar's page-size select so the new value is visible.
+        renderContent();
+        loadData();
+      },
+    }, t('quick.apply'));
+    bar.appendChild(applyNBtn);
+
+    bar.appendChild(h('.qa-divider'));
+
+    // Clear filters
+    bar.appendChild(h('button.btn.btn-sm.btn-danger', {
+      title: t('quick.clear'),
+      onclick: () => {
+        state.dataParams.sort = null;
+        state.dataParams.order = 'asc';
+        state.dataParams.search = '';
+        state.dataParams.page = 1;
+        const searchEl = document.getElementById('data-search');
+        if (searchEl) searchEl.value = '';
+        renderContent();
+        loadData();
+      },
+    }, [
+      h('span', { html: ICON.x }), t('quick.clear'),
+    ]));
+
+    return bar;
+  }
+
+  // Updates only the data grid and footer — preserves the toolbar (and search focus).
+  function renderDataGrid() {
+    const gridWrap = document.getElementById('data-grid-wrap');
+    const footer = document.getElementById('data-footer');
+    if (!gridWrap || !footer) return;
+    elclear(gridWrap);
+    elclear(footer);
+
+    if (state.loading.data) {
+      gridWrap.appendChild(h('.loading-overlay', null, h('.loading-spinner')));
+    }
+
+    if (!state.data || !state.data.rows || !state.data.rows.length) {
+      const meta = state.tables.find(t => t.name === state.selectedTable);
+      const isSolodb = meta?.kind === 'solodb-collection';
+      gridWrap.appendChild(emptyState({
+        icon: ICON.table,
+        title: state.data ? t('data.noRows') : (state.loading.data ? t('data.loading') : t('data.noData')),
+        sub: state.data
+          ? (state.dataParams.search ? t('data.noMatch') : (isSolodb ? t('data.emptyCollection') : t('data.empty')))
+          : t('data.fetching'),
+        small: true,
+      }));
+      if (state.data) renderDataFooterInto(footer);
+      return;
+    }
+
+    // Build table
+    const tbl = h('table.data-grid');
+    const thead = h('thead');
+    const tr = h('tr');
+    state.data.columns.forEach(col => {
+      const isActive = state.dataParams.sort === col;
+      const th = h(`th${isActive ? '.active' : ''}`, {
+        onclick: () => toggleSort(col),
+      }, h('.col-head', null, [
+        h('span.col-name', null, col),
+        h('span.type-badge', null, inferColType(col)),
+        isActive ? h('span.sort-arrow', { html: state.dataParams.order === 'asc' ? ICON.arrowUp : ICON.arrowDown }) : null,
+      ]));
+      tr.appendChild(th);
+    });
+    tr.appendChild(h('th.action-col', null, ''));
+    thead.appendChild(tr);
+    tbl.appendChild(thead);
+
+    const tbody = h('tbody');
+    state.data.rows.forEach(row => {
+      const tr = h('tr');
+      state.data.columns.forEach(col => {
+        const td = h('td');
+        td.appendChild(renderCell(row[col]));
+        tr.appendChild(td);
+      });
+      // Actions cell
+      const actTd = h('td');
+      actTd.appendChild(h('.row-actions', null, [
+        h('button.btn.btn-icon', {
+          title: t('data.edit'), onclick: (e) => { e.stopPropagation(); openEditModal(row); },
+        }, h('span', { html: ICON.edit })),
+        h('button.btn.btn-icon.danger', {
+          title: t('data.delete'), onclick: (e) => { e.stopPropagation(); confirmDeleteRow(row); },
+        }, h('span', { html: ICON.trash })),
+      ]));
+      tr.appendChild(actTd);
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    gridWrap.appendChild(tbl);
+
+    renderDataFooterInto(footer);
+  }
+
+  function inferColType(col) {
+    if (!state.data || !state.data.rows.length) return '';
+    // Sample first 20 non-null rows
+    let sampled = null;
+    for (let i = 0; i < Math.min(state.data.rows.length, 20); i++) {
+      const v = state.data.rows[i][col];
+      if (v !== null && v !== undefined) { sampled = v; break; }
+    }
+    if (sampled === null) return 'null';
+    const k = classify(sampled);
+    return k;
+  }
+
+  function toggleSort(col) {
+    if (state.dataParams.sort === col) {
+      state.dataParams.order = state.dataParams.order === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.dataParams.sort = col;
+      state.dataParams.order = 'asc';
+    }
+    loadData();
+  }
+
+  function renderDataFooterInto(footer) {
+    if (!state.data) return;
+    const { page, pageSize, total } = state.data;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+    const to = Math.min(page * pageSize, total);
+
+    footer.appendChild(h('.page-info', null,
+      t('data.showing', { from: formatNumber(from), to: formatNumber(to), total: formatNumber(total) })));
+    footer.appendChild(h('.spacer'));
+    footer.appendChild(h('.page-nav', null, [
+      h('button.btn.btn-icon.btn-sm', {
+        title: t('data.firstPage'), disabled: page <= 1,
+        onclick: () => { state.dataParams.page = 1; loadData(); },
+      }, h('span', { html: ICON.chevronsLeft })),
+      h('button.btn.btn-icon.btn-sm', {
+        title: t('data.prevPage'), disabled: page <= 1,
+        onclick: () => { state.dataParams.page = Math.max(1, page - 1); loadData(); },
+      }, h('span', { html: ICON.chevronLeft })),
+      h('span', { style: { padding: '0 8px', alignSelf: 'center' } },
+        t('data.pageOf', { page, total: totalPages })),
+      h('button.btn.btn-icon.btn-sm', {
+        title: t('data.nextPage'), disabled: page >= totalPages,
+        onclick: () => { state.dataParams.page = Math.min(totalPages, page + 1); loadData(); },
+      }, h('span', { html: ICON.chevronRight2 })),
+      h('button.btn.btn-icon.btn-sm', {
+        title: t('data.lastPage'), disabled: page >= totalPages,
+        onclick: () => { state.dataParams.page = totalPages; loadData(); },
+      }, h('span', { html: ICON.chevronsRight })),
+    ]));
+  }
+
+  function emptyState({ icon, title, sub, small }) {
+    return h(`.empty-state${small ? '' : ''}`, null, [
+      h('.icon-big', { html: icon }),
+      h('h3', null, title),
+      h('p', null, sub),
+    ]);
+  }
+
+  /* ---------- 9. Structure tab ---------- */
+  function renderStructureTab(panel) {
+    if (!state.selectedTable) {
+      panel.appendChild(emptyState({
+        icon: ICON.table,
+        title: t('structure.noTableTitle'),
+        sub: t('structure.noTableSub'),
+      }));
+      return;
+    }
+    const wrap = h('.structure-panel');
+    panel.appendChild(wrap);
+
+    if (state.loading.schema) {
+      wrap.appendChild(h('.loading-overlay', null, h('.loading-spinner')));
+      return;
+    }
+    if (!state.selectedSchema) {
+      wrap.appendChild(emptyState({ icon: ICON.info, title: t('structure.noSchemaTitle'), sub: t('structure.noSchemaSub') }));
+      return;
+    }
+
+    const s = state.selectedSchema;
+    const meta = state.tables.find(t => t.name === s.name);
+    const isSolodb = s.kind === 'solodb-collection';
+
+    wrap.appendChild(h('.structure-header', null, [
+      h('.name', null, s.name),
+      h(`span.badge ${kindBadgeClass(s.kind)}`, null, kindLabel(s.kind)),
+      h('.stats', null, [
+        t('structure.rowCount', { n: formatNumber(s.rowCount) }),
+        s.sizeBytes != null ? ` · ${formatBytes(s.sizeBytes)}` : '',
+      ]),
+    ]));
+
+    // Columns block
+    wrap.appendChild(h('.structure-block', null, [
+      h('h3', null, t('structure.columns', { n: s.columns.length })),
+      buildColumnsTable(s.columns),
+    ]));
+
+    // Document fields (solodb only)
+    if (isSolodb && s.documentFields && s.documentFields.length) {
+      wrap.appendChild(h('.structure-block', null, [
+        h('h3', null, t('structure.docFields', { n: s.documentFields.length })),
+        buildDocFieldsGrid(s.documentFields),
+      ]));
+    }
+
+    // Indexes
+    if (s.indexes && s.indexes.length) {
+      wrap.appendChild(h('.structure-block', null, [
+        h('h3', null, t('structure.indexes', { n: s.indexes.length })),
+        buildIndexesList(s.indexes),
+      ]));
+    }
+
+    // DDL
+    if (s.createSql) {
+      wrap.appendChild(h('.structure-block', null, [
+        h('h3', null, t('structure.ddl')),
+        h('pre.ddl-block', null, s.createSql),
+      ]));
+    }
+  }
+
+  function buildColumnsTable(columns) {
+    const tbl = h('table.data-grid.compact');
+    const thead = h('thead');
+    const headRow = h('tr');
+    const headers = [
+      { key: 'hash', label: t('structure.col.hash'), width: '40px' },
+      { key: 'name', label: t('structure.col.name'), width: null },
+      { key: 'type', label: t('structure.col.type'), width: null },
+      { key: 'null', label: t('structure.col.null'), width: '60px' },
+      { key: 'key', label: t('structure.col.key'), width: '60px' },
+      { key: 'default', label: t('structure.col.default'), width: null },
+    ];
+    headers.forEach(hd => {
+      headRow.appendChild(h('th', { style: hd.width ? { width: hd.width } : null }, hd.label));
+    });
+    thead.appendChild(headRow);
+    tbl.appendChild(thead);
+
+    const tbody = h('tbody');
+    columns.forEach((c, i) => {
+      const tr = h('tr');
+      tr.appendChild(h('td', { style: { color: 'var(--text-faint)', textAlign: 'right', fontFamily: 'var(--font-mono)' } }, String(i + 1)));
+      tr.appendChild(h('td', null, h('span', { style: { fontFamily: 'var(--font-mono)', fontWeight: '600' } }, c.name)));
+      tr.appendChild(h('td', null, h('span.col-type', null, c.type || t('structure.anyType'))));
+      tr.appendChild(h('td', null, c.notNull ? h('span', { style: { color: 'var(--rose)', fontWeight: '600' } }, t('structure.notNull')) : h('span', { style: { color: 'var(--text-faint)' } }, t('structure.null'))));
+      tr.appendChild(h('td', null, c.primaryKey ? h(`span.badge.badge-solodb`, null, [h('span.badge-dot'), t('structure.pk')]) : ''));
+      tr.appendChild(h('td', null, h('span', { style: { fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' } }, c.defaultValue ?? '—')));
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    return tbl;
+  }
+
+  function buildDocFieldsGrid(fields) {
+    const grid = h('.doc-fields-grid');
+    fields.forEach(f => {
+      grid.appendChild(h('.doc-field-card', null, [
+        h('.key', null, f.key),
+        h('.meta', null, [
+          h(`span.js-type-badge.js-type-${f.jsType}`, null, f.jsType),
+          f.nullable ? h('span', { style: { color: 'var(--text-faint)' } }, t('structure.nullable')) : h('span', { style: { color: 'var(--accent-strong)' } }, t('structure.required')),
+        ]),
+        f.sample != null ? h('.sample', { title: JSON.stringify(f.sample) }, t('structure.eg') + JSON.stringify(f.sample)) : null,
+      ]));
+    });
+    return grid;
+  }
+
+  function buildIndexesList(indexes) {
+    const wrap = h('div');
+    indexes.forEach(idx => {
+      const badges = [];
+      if (idx.unique) badges.push(h('span.badge.badge-solodb', null, t('structure.unique')));
+      if (idx.partial) badges.push(h('span.badge.badge-internal', null, t('structure.partial')));
+      wrap.appendChild(h('.index-item', null, [
+        h('span.name', null, idx.name),
+        ...badges,
+        h('.cols', null, '(' + idx.columns.join(', ') + ')'),
+      ]));
+    });
+    return wrap;
+  }
+
+  /* ---------- 10. Query tab ---------- */
+  const QUERY_SNIPPETS = [
+    { label: () => t('snippet.select'), sql: () => `SELECT * FROM ${state.selectedTable || 'TableName'} LIMIT 100;` },
+    { label: () => t('snippet.count'), sql: () => `SELECT COUNT(*) AS total FROM ${state.selectedTable || 'TableName'};` },
+    { label: () => t('snippet.solodbField'), sql: () => `SELECT Id, json_extract(Value, '$.Name') AS Name\nFROM ${state.selectedTable || 'Collection'}\nORDER BY Id\nLIMIT 50;` },
+    { label: () => t('snippet.schema'), sql: () => `SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info('${state.selectedTable || 'TableName'}');` },
+    { label: () => t('snippet.tables'), sql: () => `SELECT name, sql FROM sqlite_master WHERE type='table' ORDER BY name;` },
+  ];
+
+  function renderQueryTab(panel) {
+    const wrap = h('.query-panel');
+    panel.appendChild(wrap);
+
+    // Editor wrap
+    const editorWrap = h('.query-editor-wrap');
+    // Snippets
+    const snips = h('.query-snippets');
+    QUERY_SNIPPETS.forEach(s => {
+      snips.appendChild(h('button.snippet-btn', {
+        onclick: () => {
+          const ta = document.getElementById('query-editor-ta');
+          ta.value = s.sql();
+          state.query.sql = ta.value;
+          ta.focus();
+        },
+      }, s.label()));
+    });
+    editorWrap.appendChild(snips);
+
+    const ta = h('textarea#query-editor-ta.query-editor', {
+      placeholder: t('query.placeholder'),
+      oninput: (e) => { state.query.sql = e.target.value; },
+      onkeydown: (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          e.preventDefault();
+          runQuery();
+        }
+      },
+    });
+    ta.value = state.query.sql || (state.selectedTable ? `SELECT * FROM ${state.selectedTable} LIMIT 100;` : '');
+    state.query.sql = ta.value;
+    editorWrap.appendChild(ta);
+
+    editorWrap.appendChild(h('.query-actions', null, [
+      h('button.btn.btn-primary.btn-sm', { onclick: runQuery }, [
+        h('span', { html: ICON.play }), t('query.run'),
+      ]),
+      h('span.query-hint', null, [t('query.pressToRun'), h('kbd', null, '⌘/Ctrl'), ' + ', h('kbd', null, 'Enter'), t('query.toRun')]),
+    ]));
+
+    wrap.appendChild(editorWrap);
+
+    // Stats bar
+    if (state.query.result) {
+      const r = state.query.result;
+      wrap.appendChild(h('.query-stats', null, [
+        r.error
+          ? h('.stat', { style: { color: 'var(--rose)' } }, [h('strong', null, t('query.error'))])
+          : h('.stat', null, [h('strong', null, formatNumber(r.rows.length)), t('query.rows')]),
+        h('.stat', null, [h('strong', null, formatNumber(r.rowsAffected)), t('query.affected')]),
+        h('.stat', null, [h('strong', null, r.durationMs + ' ms'), t('query.duration')]),
+      ]));
+    }
+
+    // Error display
+    if (state.query.error) {
+      wrap.appendChild(h('.query-error', null, state.query.error));
+    } else if (state.query.result && state.query.result.error) {
+      wrap.appendChild(h('.query-error', null, state.query.result.error));
+    }
+
+    // Results
+    const resultsWrap = h('.query-results');
+    wrap.appendChild(resultsWrap);
+    if (state.query.loading) {
+      resultsWrap.appendChild(h('.loading-overlay', null, h('.loading-spinner')));
+    } else if (state.query.result && !state.query.result.error && state.query.result.rows) {
+      renderQueryResults(resultsWrap, state.query.result);
+    } else if (!state.query.result) {
+      resultsWrap.appendChild(h('.query-empty', null, t('query.empty')));
+    }
+  }
+
+  function renderQueryResults(wrap, result) {
+    if (!result.columns || !result.columns.length) {
+      wrap.appendChild(h('.query-empty', null, t('query.executed')));
+      return;
+    }
+    const tbl = h('table.data-grid');
+    const thead = h('thead');
+    const headRow = h('tr');
+    result.columns.forEach(col => {
+      headRow.appendChild(h('th', { onclick: () => {} }, h('.col-head', null, [
+        h('span.col-name', null, col),
+      ])));
+    });
+    thead.appendChild(headRow);
+    tbl.appendChild(thead);
+
+    const tbody = h('tbody');
+    result.rows.forEach(row => {
+      const tr = h('tr');
+      row.forEach(cell => {
+        const td = h('td');
+        td.appendChild(renderCell(cell));
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+  }
+
+  async function runQuery() {
+    if (!state.activeDb) { toastError(t('query.openFirst')); return; }
+    const sql = (document.getElementById('query-editor-ta')?.value || '').trim();
+    if (!sql) { toastError(t('query.sqlEmpty')); return; }
+    state.query.loading = true;
+    state.query.error = null;
+    state.query.result = null;
+    renderContent();
+    try {
+      const res = await API.runQuery(state.activeDb, sql);
+      state.query.result = res.result;
+      if (res.result?.error) {
+        state.query.error = res.result.error;
+      }
+    } catch (e) {
+      state.query.error = e.message;
+    } finally {
+      state.query.loading = false;
+      renderContent();
+    }
+  }
+
+  /* ---------- 11. Info tab ---------- */
+  function renderInfoTab(panel) {
+    if (!state.dbInfo) {
+      panel.appendChild(emptyState({ icon: ICON.info, title: t('info.noDatabaseTitle'), sub: t('info.noDatabaseSub') }));
+      return;
+    }
+    const info = state.dbInfo;
+    const wrap = h('.info-panel');
+
+    // Hero
+    wrap.appendChild(h(`.info-hero.${info.isSolodb ? 'solodb' : 'sqlite'}`, null, [
+      h('h2', null, info.fileName),
+      h('.path', null, info.path),
+      h('.badges', null, [
+        h('span.badge', null, [h('span.badge-dot'), info.isSolodb ? t('info.solodb') : t('info.plainSqlite')]),
+        info.isSolodb && info.solodbVersion ? h('span.badge', null, t('info.solodbVersion', { n: info.solodbVersion })) : null,
+        h('span.badge', null, t('info.sqliteVersion', { n: info.sqliteVersion })),
+      ]),
+    ]));
+
+    // Stat cards
+    wrap.appendChild(h('.info-stats', null, [
+      statCard(t('info.stat.fileSize'), formatBytes(info.sizeBytes), info.fileName),
+      statCard(t('info.stat.tables'), formatNumber(info.tableCount), t('info.sub.collections', { n: info.collectionCount })),
+      statCard(t('info.stat.collections'), formatNumber(info.collectionCount), info.isSolodb ? t('info.sub.solodbDocs') : '—'),
+      statCard(t('info.stat.totalRows'), formatNumber(info.totalRows), t('info.sub.acrossAll')),
+    ]));
+
+    // Two-column table lists
+    const collections = info.tables.filter(t => t.kind === 'solodb-collection');
+    const tables = info.tables.filter(t => t.kind === 'regular');
+    const internal = info.tables.filter(t => t.kind === 'solodb-internal');
+
+    wrap.appendChild(h('.info-grid', null, [
+      h('.info-card', null, [
+        h('h3', null, t('info.collections', { n: collections.length })),
+        ...collections.map(t => h('.item', { onclick: () => selectTable(t.name) }, [
+          h(`span.badge.badge-dot.badge-collection`, { style: { background: 'var(--accent)', padding: 0 } }, ''),
+          h('.name', null, t.name),
+          h('.count', null, formatNumber(t.rowCount)),
+        ])),
+        collections.length === 0 ? h('.item', { style: { color: 'var(--text-faint)', cursor: 'default' } }, t('info.noCollections')) : null,
+      ]),
+      h('.info-card', null, [
+        h('h3', null, t('info.tables', { n: tables.length })),
+        ...tables.map(t => h('.item', { onclick: () => selectTable(t.name) }, [
+          h(`span.badge.badge-dot.badge-regular`, { style: { background: 'var(--sky)', padding: 0 } }, ''),
+          h('.name', null, t.name),
+          h('.count', null, formatNumber(t.rowCount)),
+        ])),
+        tables.length === 0 ? h('.item', { style: { color: 'var(--text-faint)', cursor: 'default' } }, t('info.noTables')) : null,
+      ]),
+    ]));
+
+    // Internal tables (if any)
+    if (internal.length) {
+      wrap.appendChild(h('.info-card', null, [
+        h('h3', null, t('info.internal', { n: internal.length })),
+        ...internal.map(t => h('.item', { onclick: () => selectTable(t.name) }, [
+          h(`span.badge.badge-dot.badge-internal`, { style: { background: 'var(--amber)', padding: 0 } }, ''),
+          h('.name', null, t.name),
+          h('.count', null, formatNumber(t.rowCount)),
+        ])),
+      ]));
+    }
+
+    // Pragmas
+    if (info.pragmas && info.pragmas.length) {
+      wrap.appendChild(h('.info-card', { style: { marginTop: '16px' } }, [
+        h('h3', null, t('info.pragmas', { n: info.pragmas.length })),
+        h('.pragma-grid', null, info.pragmas.map(p => h('.pragma-item', null, [
+          h('.name', null, p.name),
+          h('.value', null, String(p.value)),
+        ]))),
+      ]));
+    }
+
+    // About card
+    wrap.appendChild(h('.about-card', null, [
+      h('h3', null, t('info.about')),
+      h('p', null, info.isSolodb ? t('info.aboutSolodb') : t('info.aboutSqlite')),
+      h('a', { href: DOCS_URL, target: '_blank', rel: 'noopener' }, [
+        t('info.readDocs'), ' ', h('span', { html: ICON.external }),
+      ]),
+    ]));
+
+    panel.appendChild(wrap);
+  }
+
+  function statCard(label, value, sub) {
+    return h('.info-stat-card', null, [
+      h('.label', null, label),
+      h('.value', null, value),
+      sub ? h('.sub', null, sub) : null,
+    ]);
+  }
+
+  /* ---------- 12. Modals ---------- */
+  function openModal(node) {
+    const root = document.getElementById('modal-root');
+    elclear(root);
+    const overlay = h('.modal-overlay', {
+      onclick: (e) => { if (e.target === overlay) closeModal(); },
+    }, node);
+    root.appendChild(overlay);
+    document.addEventListener('keydown', modalEscClose);
+  }
+  function closeModal() {
+    elclear(document.getElementById('modal-root'));
+    document.removeEventListener('keydown', modalEscClose);
+  }
+  function modalEscClose(e) { if (e.key === 'Escape') closeModal(); }
+
+  /* ----- Open Database modal ----- */
+  function openOpenModal() {
+    const modal = h('.modal.modal-lg');
+    modal.appendChild(h('.modal-header', null, [
+      h('h2', null, t('open.title')),
+      h('button.modal-close', { html: ICON.x, onclick: closeModal }),
+    ]));
+
+    // Tabs
+    const tabsWrap = h('.modal-tabs');
+    const panes = { files: h('.modal-tab-pane'), recent: h('.modal-tab-pane'), path: h('.modal-tab-pane'), browse: h('.modal-tab-pane.browse-pane') };
+    const tabBtns = {};
+    function activateTab(id) {
+      Object.entries(tabBtns).forEach(([k, b]) => b.classList.toggle('active', k === id));
+      Object.entries(panes).forEach(([k, p]) => p.classList.toggle('active', k === id));
+    }
+    [['files', t('open.tab.files')], ['recent', t('open.tab.recent')], ['path', t('open.tab.path')], ['browse', t('open.tab.browse')]].forEach(([id, label]) => {
+      const b = h('.modal-tab', { onclick: () => activateTab(id) }, label);
+      tabBtns[id] = b;
+      tabsWrap.appendChild(b);
+    });
+    modal.appendChild(tabsWrap);
+
+    // Files pane
+    const filesPane = panes.files;
+    filesPane.appendChild(h('.form-hint', { style: { marginBottom: '8px' } }, t('open.files.hint')));
+
+    // Upload dropzone
+    const dropzone = h('.upload-dropzone', { tabindex: '0' }, [
+      h('span', { html: ICON.upload || '↑' }),
+      h('span', null, t('open.dropzone.pre')),
+      h('span.link', null, t('open.dropzone.link')),
+    ]);
+    const fileInput = h('input', { type: 'file', accept: '.db,.sqlite,.sqlite3,.db-wal,.db-shm,.sqlite-wal,.sqlite-shm,.sqlite3-wal,.sqlite3-shm', multiple: true, style: { display: 'none' } });
+    dropzone.appendChild(fileInput);
+    filesPane.appendChild(dropzone);
+
+    const fileList = h('.file-list');
+    filesPane.appendChild(fileList);
+    loadFilesForModal(fileList);
+
+    // Upload handlers (drag & drop + click)
+    const handleUpload = async (files) => {
+      if (!files || !files.length) return;
+      try {
+        for (const file of files) {
+          await API.uploadFile(file);
+        }
+        toastSuccess(t('toast.uploadedN', { n: files.length }));
+        loadFilesForModal(fileList);
+      } catch (e) {
+        toastError(t('toast.uploadFailed') + e.message);
+      }
+    };
+    dropzone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => handleUpload([...fileInput.files]));
+    ['dragenter', 'dragover'].forEach(ev => dropzone.addEventListener(ev, e => {
+      e.preventDefault(); e.stopPropagation();
+      dropzone.classList.add('drag-over');
+    }));
+    ['dragleave', 'drop'].forEach(ev => dropzone.addEventListener(ev, e => {
+      e.preventDefault(); e.stopPropagation();
+      dropzone.classList.remove('drag-over');
+    }));
+    dropzone.addEventListener('drop', e => handleUpload([...(e.dataTransfer?.files || [])]));
+
+
+    // Recent pane
+    const recentPane = panes.recent;
+    const connList = h('.conn-list');
+    recentPane.appendChild(connList);
+    loadConnectionsForModal(connList);
+
+    // Path pane
+    const pathPane = panes.path;
+    pathPane.appendChild(h('.form-row', null, [
+      h('label', null, t('open.pathLabel')),
+      h('input.form-input#open-path-input', { type: 'text', placeholder: t('open.pathPlaceholder') }),
+      h('.form-hint', null, t('open.pathHint')),
+    ]));
+    pathPane.appendChild(h('.form-row', null, [
+      h('label', null, t('open.createLabel')),
+      h('input.form-input#open-create-input', { type: 'text', placeholder: t('open.createPlaceholder') }),
+      h('.form-hint', null, t('open.createHint')),
+    ]));
+    pathPane.appendChild(h('.modal-footer', { style: { padding: '12px 0 0', border: 'none' } }, [
+      h('button.btn', { onclick: closeModal }, t('open.cancel')),
+      h('button.btn.btn-primary', {
+        onclick: () => {
+          const pathInput = document.getElementById('open-path-input').value.trim();
+          const createInput = document.getElementById('open-create-input').value.trim();
+          const target = createInput || pathInput;
+          if (!target) { toastError(t('open.enterPath')); return; }
+          openDatabaseByPath(target, !!createInput);
+        },
+      }, [h('span', { html: ICON.folderOpen }), t('open.open')]),
+    ]));
+
+    // Browse pane (local filesystem browser — no upload needed)
+    const browsePane = panes.browse;
+    buildBrowsePane(browsePane);
+
+    Object.values(panes).forEach(p => modal.appendChild(p));
+    activateTab('files');
+    openModal(modal);
+  }
+
+  // Builds the local filesystem browser pane inside the Open modal.
+  // Calls GET /api/database/browse?dir=<path> and lets the user navigate folders
+  // or click a database file to open it directly by path.
+  function buildBrowsePane(pane) {
+    elclear(pane);
+    pane.appendChild(h('.browse-hint', null, t('browse.hint')));
+
+    // Path bar with Up button
+    const pathBar = h('.browse-path-bar');
+    const upBtn = h('button.btn.btn-sm.btn-ghost', {
+      title: t('browse.parent'),
+      onclick: () => {
+        if (currentBrowseState && currentBrowseState.parent != null) {
+          loadBrowseDir(currentBrowseState.parent);
+        }
+      },
+    }, [h('span', { html: ICON.chevronUp }), t('browse.up')]);
+    const pathLabel = h('span.path-label', null, t('browse.breadcrumb'));
+    const pathText = h('span.path-text');
+    pathBar.appendChild(upBtn);
+    pathBar.appendChild(pathLabel);
+    pathBar.appendChild(pathText);
+    pane.appendChild(pathBar);
+
+    const listWrap = h('.browse-list');
+    pane.appendChild(listWrap);
+
+    // Home button at the bottom (small)
+    const homeBtn = h('button.btn.btn-sm.btn-ghost', {
+      style: { marginTop: '8px' },
+      onclick: () => loadBrowseDir(null),
+    }, [h('span', { html: ICON.folderOpen }), t('browse.home')]);
+    pane.appendChild(homeBtn);
+
+    let currentBrowseState = null;
+
+    async function loadBrowseDir(dir) {
+      elclear(listWrap);
+      listWrap.appendChild(h('.browse-empty', null, t('browse.loading')));
+      upBtn.disabled = true;
+      try {
+        const res = await API.browsePath(dir);
+        currentBrowseState = res;
+        // Update path text
+        pathText.textContent = res.current || dir || '~';
+        upBtn.disabled = (res.parent == null);
+        elclear(listWrap);
+
+        if (res.error) {
+          listWrap.appendChild(h('.browse-error', null, res.error));
+          // Still allow Up navigation
+          if (res.parent != null) {
+            listWrap.appendChild(h('.browse-empty', null, '↑ ' + t('browse.up')));
+          }
+          return;
+        }
+
+        const entries = res.entries || [];
+        if (!entries.length) {
+          listWrap.appendChild(h('.browse-empty', null, t('browse.empty')));
+          return;
+        }
+
+        // Sort: folders first, then files, alphabetical
+        entries.sort((a, b) => {
+          if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+          return a.name.localeCompare(b.name, undefined, { numeric: true });
+        });
+
+        entries.forEach(entry => {
+          const item = h(`.browse-item.${entry.isDir ? 'folder' : 'dbfile'}`, {
+            title: entry.isDir ? t('browse.openFolder') : t('browse.openFile'),
+            onclick: () => {
+              if (entry.isDir) {
+                loadBrowseDir(entry.path);
+                try { localStorage.setItem('solodb-browse-dir', entry.path); } catch {}
+              } else {
+                // Open the database file directly by path
+                openDatabaseByPath(entry.path);
+              }
+            },
+          }, [
+            h('.icon.' + (entry.isDir ? 'folder' : 'dbfile'), {
+              html: entry.isDir ? ICON.folder : ICON.database,
+            }),
+            h('.name', null, entry.name),
+            entry.isDir
+              ? null
+              : h('.meta', null, formatBytes(entry.size)),
+          ]);
+          listWrap.appendChild(item);
+        });
+      } catch (e) {
+        elclear(listWrap);
+        listWrap.appendChild(h('.browse-error', null, t('browse.errorTitle') + ': ' + e.message));
+      }
+    }
+
+    // Start at last-visited dir or home
+    let startDir = null;
+    try {
+      const saved = localStorage.getItem('solodb-browse-dir');
+      if (saved) startDir = saved;
+    } catch {}
+    loadBrowseDir(startDir);
+  }
+
+  async function loadFilesForModal(fileList) {
+    elclear(fileList);
+    fileList.appendChild(h('.empty-list', null, t('open.loading')));
+    try {
+      const res = await API.listFiles();
+      state.files = res.files || [];
+      elclear(fileList);
+      if (!state.files.length) {
+        fileList.appendChild(h('.empty-list', null, t('open.noFiles')));
+        return;
+      }
+      state.files.forEach(f => {
+        const item = h('.file-item', {
+          onclick: () => openDatabaseByPath(f.path),
+        }, [
+          h('.icon.sqlite', { html: ICON.database }),
+          h('.info', null, [
+            h('.name', null, f.name),
+            h('.meta', null, `${formatBytes(f.sizeBytes)} · ${f.path}`),
+          ]),
+          h('button.conn-item-delete.delete-btn', {
+            title: t('open.deleteFileTitle'),
+            html: ICON.trash,
+            onclick: async (e) => {
+              e.stopPropagation();
+              if (!confirm(t('open.deleteFileConfirm', { name: f.name }))) return;
+              try {
+                await API.deleteFile(f.name);
+                toastSuccess(t('toast.deleted', { name: f.name }));
+                loadFilesForModal(fileList);
+              } catch (err) {
+                toastError(t('toast.deleteFailed') + err.message);
+              }
+            },
+          }),
+        ]);
+        fileList.appendChild(item);
+      });
+    } catch (e) {
+      elclear(fileList);
+      fileList.appendChild(h('.empty-list', null, t('toast.error') + ': ' + e.message));
+    }
+  }
+
+  async function loadConnectionsForModal(connList) {
+    elclear(connList);
+    connList.appendChild(h('.empty-list', null, t('open.loading')));
+    try {
+      const res = await API.listConnections();
+      state.connections = res.connections || [];
+      elclear(connList);
+      if (!state.connections.length) {
+        connList.appendChild(h('.empty-list', null, t('open.noRecent')));
+        return;
+      }
+      state.connections.forEach(c => {
+        const item = h('.conn-item', {
+          onclick: () => openDatabaseByPath(c.path),
+        }, [
+          h(`.icon.${c.isSolodb ? 'solodb' : 'sqlite'}`, { html: ICON.database }),
+          h('.info', null, [
+            h('.name', null, c.name),
+            h('.meta', null, [
+              c.path,
+              t('open.lastOpened'),
+              c.lastOpenedAt ? new Date(c.lastOpenedAt).toLocaleString() : t('open.unknown'),
+            ]),
+          ]),
+          h('button.conn-item-delete.delete-btn', {
+            title: t('open.deleteRecentTitle'), html: ICON.trash,
+            onclick: async (e) => {
+              e.stopPropagation();
+              try {
+                await API.deleteConnection(c.id);
+                toastSuccess(t('toast.removedRecent', { name: c.name }));
+                loadConnectionsForModal(connList);
+              } catch (err) { toastError(err.message); }
+            },
+          }),
+        ]);
+        connList.appendChild(item);
+      });
+    } catch (e) {
+      elclear(connList);
+      connList.appendChild(h('.empty-list', null, t('toast.error') + ': ' + e.message));
+    }
+  }
+
+  /* ----- New table dialog ----- */
+  let newTableState = { kind: 'solodb-collection', name: '', columns: [] };
+
+  function openNewTableModal() {
+    if (!state.activeDb) { toastError(t('newtable.openFirst')); return; }
+    // Reset state for a fresh open (not when re-rendering after kind change).
+    if (!openNewTableModal._rebuilding) {
+      newTableState = {
+        kind: 'solodb-collection',
+        name: '',
+        columns: [
+          { name: 'id', type: 'INTEGER', pk: true, notNull: true },
+          { name: 'name', type: 'TEXT', pk: false, notNull: false },
+        ],
+      };
+    }
+    openNewTableModal._rebuilding = false;
+
+    const modal = h('.modal');
+    modal.appendChild(h('.modal-header', null, [
+      h('h2', null, t('newtable.title')),
+      h('button.modal-close', { html: ICON.x, onclick: closeModal }),
+    ]));
+
+    const body = h('.modal-body');
+    body.appendChild(h('.kind-selector', null, [
+      kindCard('solodb', t('newtable.solodb.title'), t('newtable.solodb.desc'), ICON.layers),
+      kindCard('regular', t('newtable.regular.title'), t('newtable.regular.desc'), ICON.table),
+    ]));
+
+    body.appendChild(h('.form-row', null, [
+      h('label', null, t('newtable.nameLabel')),
+      h('input.form-input#new-table-name', {
+        type: 'text', placeholder: t('newtable.namePlaceholder'),
+        value: newTableState.name,
+        oninput: (e) => { newTableState.name = e.target.value; },
+      }),
+    ]));
+
+    const columnsBlock = h('div#new-table-columns');
+    body.appendChild(columnsBlock);
+    renderColumnBuilder(columnsBlock);
+
+    body.appendChild(h('.form-hint', { id: 'new-table-note' }, newTableNote()));
+
+    modal.appendChild(body);
+
+    modal.appendChild(h('.modal-footer', null, [
+      h('button.btn', { onclick: closeModal }, t('newtable.cancel')),
+      h('button.btn.btn-primary', { onclick: createTableFromModal }, [
+        h('span', { html: ICON.plus }), t('newtable.create'),
+      ]),
+    ]));
+
+    openModal(modal);
+  }
+
+  function kindCard(kind, title, desc, icon) {
+    const selected = newTableState.kind === (kind === 'solodb' ? 'solodb-collection' : 'regular');
+    const card = h(`.kind-card.${kind}${selected ? '.selected' : ''}`, {
+      onclick: () => {
+        newTableState.kind = kind === 'solodb' ? 'solodb-collection' : 'regular';
+        // Re-render modal without resetting state.
+        openNewTableModal._rebuilding = true;
+        closeModal();
+        openNewTableModal();
+      },
+    }, [
+      h('.icon-wrap', { html: icon }),
+      h('h4', null, title),
+      h('p', null, desc),
+    ]);
+    return card;
+  }
+
+  function newTableNote() {
+    if (newTableState.kind === 'solodb-collection') {
+      return t('newtable.noteSolodb');
+    }
+    return t('newtable.noteRegular');
+  }
+
+  const COLUMN_TYPES = ['INTEGER', 'TEXT', 'REAL', 'BLOB', 'NUMERIC', 'BOOLEAN', 'DATETIME'];
+  function renderColumnBuilder(wrap) {
+    elclear(wrap);
+    if (newTableState.kind !== 'regular') return;
+    wrap.appendChild(h('label', { style: { display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', margin: '8px 0 6px' } }, t('newtable.columns')));
+    newTableState.columns.forEach((col, idx) => {
+      const row = h('.column-row', null, [
+        h('input', {
+          type: 'text', placeholder: t('newtable.colNamePlaceholder'), value: col.name,
+          oninput: (e) => { newTableState.columns[idx].name = e.target.value; },
+        }),
+        (() => {
+          const sel = h('select', {
+            onchange: (e) => { newTableState.columns[idx].type = e.target.value; },
+          });
+          COLUMN_TYPES.forEach(t => {
+            const opt = h('option', { value: t }, t);
+            if (t === col.type) opt.selected = true;
+            sel.appendChild(opt);
+          });
+          return sel;
+        })(),
+        h('.col-check', null, h('label', null, [
+          h('input', {
+            type: 'checkbox', checked: col.pk,
+            onchange: (e) => { newTableState.columns[idx].pk = e.target.checked; },
+          }),
+          t('newtable.pk'),
+        ])),
+        h('.col-check', null, h('label', null, [
+          h('input', {
+            type: 'checkbox', checked: col.notNull,
+            onchange: (e) => { newTableState.columns[idx].notNull = e.target.checked; },
+          }),
+          t('newtable.nn'),
+        ])),
+        h('button.col-remove', {
+          html: ICON.x, title: t('newtable.removeColumn'),
+          onclick: () => { newTableState.columns.splice(idx, 1); renderColumnBuilder(wrap); },
+        }),
+      ]);
+      wrap.appendChild(row);
+    });
+    wrap.appendChild(h('button.btn.btn-sm', {
+      style: { marginTop: '6px' },
+      onclick: () => {
+        newTableState.columns.push({ name: '', type: 'TEXT', pk: false, notNull: false });
+        renderColumnBuilder(wrap);
+      },
+    }, [h('span', { html: ICON.plus }), t('newtable.addColumn')]));
+  }
+
+  async function createTableFromModal() {
+    const name = newTableState.name.trim();
+    if (!name) { toastError(t('newtable.enterName')); return; }
+    if (newTableState.kind === 'regular') {
+      const valid = newTableState.columns.filter(c => c.name.trim());
+      if (!valid.length) { toastError(t('newtable.addCol')); return; }
+      try {
+        await API.createTable({
+          db: state.activeDb,
+          name,
+          kind: 'regular',
+          columns: valid.map(c => ({
+            name: c.name.trim(),
+            type: c.type,
+            primaryKey: !!c.pk,
+            notNull: !!c.notNull,
+          })),
+        });
+      } catch (e) { toastError(e.message); return; }
+    } else {
+      try {
+        await API.createTable({ db: state.activeDb, name, kind: 'solodb-collection' });
+      } catch (e) { toastError(e.message); return; }
+    }
+    toastSuccess(newTableState.kind === 'solodb-collection'
+      ? t('newtable.createdCollection', { name })
+      : t('newtable.createdTable', { name }));
+    closeModal();
+    await refreshTables();
+    selectTable(name);
+  }
+
+  /* ----- Insert / Edit modal ----- */
+  let editState = null;
+  function openInsertModal() {
+    if (!state.selectedTable) return;
+    const meta = state.tables.find(t => t.name === state.selectedTable);
+    const isSolodb = meta?.kind === 'solodb-collection';
+    editState = { mode: 'insert', isSolodb, row: null, schema: state.selectedSchema };
+    buildEditModal();
+  }
+
+  function openEditModal(row) {
+    const meta = state.tables.find(t => t.name === state.selectedTable);
+    const isSolodb = meta?.kind === 'solodb-collection';
+    editState = { mode: 'edit', isSolodb, row, schema: state.selectedSchema };
+    buildEditModal();
+  }
+
+  function buildEditModal() {
+    if (!editState) return;
+    const { mode, isSolodb, row, schema } = editState;
+    const isEdit = mode === 'edit';
+
+    const titleMode = isEdit
+      ? (isSolodb ? t('edit.editDocument') : t('edit.editRow'))
+      : (isSolodb ? t('edit.newDocument') : t('edit.newRow'));
+    const modal = h('.modal');
+    modal.appendChild(h('.modal-header', null, [
+      h('h2', null, `${titleMode}${t('edit.titleSep')}${state.selectedTable}`),
+      h('button.modal-close', { html: ICON.x, onclick: closeModal }),
+    ]));
+
+    const body = h('.modal-body');
+
+    if (isSolodb) {
+      // JSON editor with two tabs: Value, Metadata
+      const tabsWrap = h('.modal-tabs');
+      const valuePane = h('.modal-tab-pane');
+      const metaPane = h('.modal-tab-pane');
+      const tabBtns = {};
+      function activate(id) {
+        Object.entries(tabBtns).forEach(([k, b]) => b.classList.toggle('active', k === id));
+        valuePane.classList.toggle('active', id === 'value');
+        metaPane.classList.toggle('active', id === 'meta');
+      }
+      const valBtn = h('.modal-tab', { onclick: () => activate('value') }, t('edit.tabValue'));
+      const metaBtn = h('.modal-tab', { onclick: () => activate('meta') }, t('edit.tabMetadata'));
+      tabBtns.value = valBtn; tabBtns.meta = metaBtn;
+      tabsWrap.appendChild(valBtn); tabsWrap.appendChild(metaBtn);
+      modal.appendChild(tabsWrap);
+
+      // Value textarea
+      let initialValue = isEdit ? row.__rawValue : { Name: '', Email: '' };
+      if (typeof initialValue === 'string') {
+        try { initialValue = JSON.parse(initialValue); } catch {}
+      }
+      const valueTa = h('textarea.form-textarea.tall', { spellcheck: 'false' });
+      valueTa.value = JSON.stringify(initialValue, null, 2);
+      valuePane.appendChild(h('.form-hint', { style: { marginBottom: '6px' } },
+        t('edit.valueHint')));
+      valuePane.appendChild(valueTa);
+      valuePane.appendChild(h('.form-hint', { style: { marginTop: '6px' } },
+        t('edit.valueTip')));
+
+      // Metadata textarea
+      let initialMeta = isEdit ? row.__metadata : null;
+      if (typeof initialMeta === 'string') {
+        try { initialMeta = JSON.parse(initialMeta); } catch {}
+      }
+      const metaTa = h('textarea.form-textarea.tall', { spellcheck: 'false' });
+      metaTa.value = initialMeta ? JSON.stringify(initialMeta, null, 2) : '';
+      metaPane.appendChild(h('.form-hint', { style: { marginBottom: '6px' } },
+        t('edit.metaHint')));
+      metaPane.appendChild(metaTa);
+
+      modal.appendChild(valuePane);
+      modal.appendChild(metaPane);
+      activate('value');
+
+      modal.appendChild(h('.modal-footer', null, [
+        h('button.btn', { onclick: closeModal }, t('edit.cancel')),
+        h('button.btn.btn-primary', {
+          onclick: async () => {
+            let value, metadata;
+            try { value = JSON.parse(valueTa.value || '{}'); }
+            catch (e) { toastError(t('edit.valueInvalid') + e.message); return; }
+            if (metaTa.value.trim()) {
+              try { metadata = JSON.parse(metaTa.value); }
+              catch (e) { toastError(t('edit.metaInvalid') + e.message); return; }
+            }
+            try {
+              if (isEdit) {
+                await API.updateRow(state.selectedTable, state.activeDb, {
+                  identifier: row.__identifier, value, metadata,
+                });
+                toastSuccess(t('edit.docUpdated'));
+              } else {
+                await API.insertRow(state.selectedTable, state.activeDb, {
+                  value, metadata,
+                });
+                toastSuccess(t('edit.docInserted'));
+              }
+              closeModal();
+              await loadData();
+              await refreshTables();
+            } catch (e) { toastError(e.message); }
+          },
+        }, [h('span', { html: ICON.check }), isEdit ? t('edit.save') : t('edit.insert')]),
+      ]));
+
+    } else {
+      // Regular table form
+      if (!schema) {
+        body.appendChild(h('.empty-list', null, t('edit.schemaNotLoaded')));
+        modal.appendChild(body);
+        modal.appendChild(h('.modal-footer', null, h('button.btn', { onclick: closeModal }, t('edit.close'))));
+        openModal(modal);
+        return;
+      }
+      const formState = {};
+      schema.columns.forEach(col => {
+        const isPk = col.primaryKey;
+        const val = isEdit ? row[col.name] : (col.defaultValue ?? '');
+        formState[col.name] = val;
+        const isReadOnly = isEdit && isPk;
+        const rowEl = h('.form-row', null, [
+          h('label', null, [
+            col.name,
+            isPk ? h('span.badge.badge-solodb', { style: { marginLeft: '6px' } }, t('edit.pk')) : null,
+            col.notNull ? h('span', { style: { marginLeft: '6px', color: 'var(--text-faint)', fontSize: '10px' } }, t('edit.notNull')) : null,
+          ]),
+          h('input.form-input', {
+            type: 'text', value: val ?? '', readOnly: isReadOnly,
+            disabled: isReadOnly,
+            style: isReadOnly ? { background: 'var(--bg-elev)', color: 'var(--text-muted)' } : null,
+            oninput: (e) => { formState[col.name] = e.target.value; },
+          }),
+          h('.form-hint', null, col.defaultValue != null
+            ? t('edit.colHintDefault', { type: col.type || t('structure.anyType'), default: col.defaultValue })
+            : (col.type || t('structure.anyType'))),
+        ]);
+        body.appendChild(rowEl);
+      });
+      modal.appendChild(body);
+
+      modal.appendChild(h('.modal-footer', null, [
+        h('button.btn', { onclick: closeModal }, t('edit.cancel')),
+        h('button.btn.btn-primary', {
+          onclick: async () => {
+            const values = {};
+            schema.columns.forEach(col => {
+              if (isEdit && col.primaryKey) return; // don't send PK on update
+              let v = formState[col.name];
+              const type = (col.type || '').toUpperCase();
+              if (v === '' || v == null) {
+                values[col.name] = null;
+              } else if (type === 'INTEGER' || type === 'INT') {
+                values[col.name] = parseInt(v, 10);
+                if (isNaN(values[col.name])) values[col.name] = v;
+              } else if (type === 'REAL' || type === 'FLOAT' || type === 'DOUBLE') {
+                values[col.name] = parseFloat(v);
+                if (isNaN(values[col.name])) values[col.name] = v;
+              } else if (type === 'BOOLEAN') {
+                values[col.name] = ['true', '1', 'yes', 'y'].includes(String(v).toLowerCase());
+              } else {
+                values[col.name] = v;
+              }
+            });
+            try {
+              if (isEdit) {
+                await API.updateRow(state.selectedTable, state.activeDb, {
+                  identifier: row.__identifier, values,
+                });
+                toastSuccess(t('edit.rowUpdated'));
+              } else {
+                await API.insertRow(state.selectedTable, state.activeDb, { values });
+                toastSuccess(t('edit.rowInserted'));
+              }
+              closeModal();
+              await loadData();
+              await refreshTables();
+            } catch (e) { toastError(e.message); }
+          },
+        }, [h('span', { html: ICON.check }), isEdit ? t('edit.save') : t('edit.insert')]),
+      ]));
+    }
+
+    openModal(modal);
+  }
+
+  /* ----- Confirm dialogs ----- */
+  function confirmDeleteRow(row) {
+    const modal = h('.modal', { style: { maxWidth: '420px' } });
+    modal.appendChild(h('.modal-header', null, [
+      h('h2', null, t('confirm.deleteRowTitle')),
+      h('button.modal-close', { html: ICON.x, onclick: closeModal }),
+    ]));
+    modal.appendChild(h('.modal-body', null, [
+      h('p.confirm-text', null, t('confirm.deleteRowText')),
+      h('p.confirm-sub', null, t('confirm.deleteRowSub')),
+    ]));
+    modal.appendChild(h('.modal-footer', null, [
+      h('button.btn', { onclick: closeModal }, t('confirm.cancel')),
+      h('button.btn.btn-danger', {
+        onclick: async () => {
+          try {
+            await API.deleteRow(state.selectedTable, state.activeDb, { identifier: row.__identifier });
+            toastSuccess(t('confirm.rowDeleted'));
+            closeModal();
+            await loadData();
+            await refreshTables();
+          } catch (e) { toastError(e.message); }
+        },
+      }, [h('span', { html: ICON.trash }), t('confirm.delete')]),
+    ]));
+    openModal(modal);
+  }
+
+  function confirmDropTable(tableMeta) {
+    const modal = h('.modal', { style: { maxWidth: '420px' } });
+    modal.appendChild(h('.modal-header', null, [
+      h('h2', null, t('confirm.dropTitle', { kind: kindLabelLower(tableMeta.kind) })),
+      h('button.modal-close', { html: ICON.x, onclick: closeModal }),
+    ]));
+    modal.appendChild(h('.modal-body', null, [
+      h('p.confirm-text', null, [
+        t('confirm.dropPrefix'), h('strong', null, tableMeta.name), t('confirm.dropSuffix'),
+      ]),
+      h('p.confirm-sub', null, t('confirm.dropSub', { kind: kindLabelLower(tableMeta.kind), n: formatNumber(tableMeta.rowCount) })),
+      h('input.form-input#confirm-drop-input', {
+        type: 'text', placeholder: t('confirm.dropPlaceholder'), style: { marginTop: '8px' },
+      }),
+    ]));
+    modal.appendChild(h('.modal-footer', null, [
+      h('button.btn', { onclick: closeModal }, t('confirm.cancel')),
+      h('button.btn.btn-danger', {
+        onclick: async () => {
+          const typed = document.getElementById('confirm-drop-input').value.trim();
+          if (typed !== tableMeta.name) { toastError(t('confirm.nameMismatch')); return; }
+          try {
+            await API.dropTable(tableMeta.name, state.activeDb);
+            toastSuccess(t('confirm.dropped', { name: tableMeta.name }));
+            closeModal();
+            if (state.selectedTable === tableMeta.name) {
+              state.selectedTable = null;
+              state.selectedSchema = null;
+              state.data = null;
+              switchTab('data');
+            }
+            await refreshTables();
+            renderContent();
+          } catch (e) { toastError(e.message); }
+        },
+      }, [h('span', { html: ICON.trash }), t('confirm.drop')]),
+    ]));
+    openModal(modal);
+  }
+
+  /* ---------- 13. Actions ---------- */
+  async function openDatabaseByPath(path, create) {
+    try {
+      const res = await API.openDatabase(path, create);
+      state.activeDb = res.info.path;
+      state.dbInfo = res.info;
+      state.tables = res.info.tables || [];
+      state.selectedTable = null;
+      state.selectedSchema = null;
+      state.data = null;
+      state.dataParams = { page: 1, pageSize: 50, sort: null, order: 'asc', search: '' };
+      state.query = { sql: '', result: null, error: null, loading: false };
+      state.activeTab = 'data';
+      closeModal();
+      renderMainApp();
+      renderTopbar();
+      renderStatusbar();
+      // Refresh connections for sidebar (path-based open creates a connection record server-side)
+      try { const c = await API.listConnections(); state.connections = c.connections || []; } catch {}
+      toastSuccess(t('toast.opened', { name: res.info.fileName }), res.info.isSolodb ? t('toast.solodbDb') : t('toast.sqliteDb'));
+    } catch (e) {
+      toastError(e.message, t('toast.failedOpen'));
+    }
+  }
+
+  async function selectTable(name) {
+    state.selectedTable = name;
+    state.selectedSchema = null;
+    state.data = null;
+    state.dataParams = { ...state.dataParams, page: 1, sort: null, order: 'asc', search: '' };
+    if (state.activeTab === 'info') state.activeTab = 'data';
+    renderSidebarList();
+    renderContent();
+    renderStatusbar();
+    // Fire parallel loads
+    loadData();
+    loadSchema();
+  }
+
+  async function loadData() {
+    if (!state.selectedTable || !state.activeDb) return;
+    state.loading.data = true;
+    // Only update the grid+footer, not the toolbar (preserves search input focus).
+    if (state.activeTab === 'data') renderDataGrid();
+    try {
+      const params = {
+        page: state.dataParams.page,
+        pageSize: state.dataParams.pageSize,
+      };
+      if (state.dataParams.sort) {
+        params.sort = state.dataParams.sort;
+        params.order = state.dataParams.order;
+      }
+      if (state.dataParams.search) params.search = state.dataParams.search;
+      const res = await API.getData(state.selectedTable, state.activeDb, params);
+      state.data = res.data;
+    } catch (e) {
+      toastError(e.message, t('toast.failedLoadData'));
+      state.data = null;
+    } finally {
+      state.loading.data = false;
+      if (state.activeTab === 'data') renderDataGrid();
+      renderStatusbar();
+    }
+  }
+
+  async function loadSchema() {
+    if (!state.selectedTable || !state.activeDb) return;
+    state.loading.schema = true;
+    try {
+      const res = await API.getSchema(state.selectedTable, state.activeDb);
+      state.selectedSchema = res.schema;
+    } catch (e) {
+      // silent — will retry on tab switch
+    } finally {
+      state.loading.schema = false;
+      if (state.activeTab === 'structure') renderContent();
+    }
+  }
+
+  async function refreshTables() {
+    if (!state.activeDb) return;
+    try {
+      const [infoRes, tablesRes] = await Promise.all([
+        API.getDatabaseInfo(state.activeDb),
+        API.listTables(state.activeDb),
+      ]);
+      state.dbInfo = infoRes.info;
+      state.tables = tablesRes.tables || [];
+      renderTopbar();
+      renderSidebarList();
+      renderStatusbar();
+    } catch (e) {
+      // silent
+    }
+  }
+
+  async function refreshAll() {
+    if (!state.activeDb) return;
+    state.loading.data = true;
+    state.loading.schema = true;
+    renderTopbar();
+    renderContent();
+    try {
+      await Promise.all([
+        (async () => {
+          const infoRes = await API.getDatabaseInfo(state.activeDb);
+          state.dbInfo = infoRes.info;
+          state.tables = infoRes.info.tables || [];
+        })(),
+        loadData(),
+        loadSchema(),
+      ]);
+    } catch (e) {
+      toastError(e.message, t('toast.refreshFailed'));
+    } finally {
+      renderTopbar();
+      renderSidebarList();
+      renderContent();
+      renderStatusbar();
+    }
+  }
+
+  /* ---------- Boot ---------- */
+  async function boot() {
+    applyTheme();
+    applyLang();
+    // Prefetch files for the welcome screen.
+    try {
+      const res = await API.listFiles();
+      state.files = res.files || [];
+    } catch {}
+    try {
+      const c = await API.listConnections();
+      state.connections = c.connections || [];
+    } catch {}
+    renderTopbar();
+    renderWelcome();
+    renderStatusbar();
+  }
+
+  document.addEventListener('DOMContentLoaded', boot);
+  </script>
+</body>
+</html>

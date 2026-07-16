@@ -1,0 +1,41 @@
+# Build output
+/dist/
+/dist-win/
+/solodb-csharp/bin/
+/solodb-csharp/obj/
+
+# Runtime data
+/db/
+*.log
+dev.log
+server.log
+
+# SQLite temp files
+*.db-shm
+*.db-wal
+*-shm
+*-wal
+
+# .NET
+*.user
+bin/
+obj/
+
+# OS
+.DS_Store
+*.pem
+
+# Env
+.env*
+
+# IDE
+.vs/
+.vscode/
+.idea/
+.claude
+.z-ai-config
+
+# Embedded sample databases
+/solodb-csharp/databases/
+upload/
+dist-win/

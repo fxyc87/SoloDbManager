@@ -1,0 +1,76 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Single self-contained file (no AOT — WebView2 isn't AOT-friendly). -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Allow building Windows-targeting projects on Linux. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- Embed the frontend as a resource (no wwwroot folder in output). -->
+    <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+    <NoWin32Manifest>true</NoWin32Manifest>
+    <!-- We provide an explicit [STAThread] Main in Program.cs, so disable
+         the implicit entry point from top-level statements. -->
+    <DisableImplicitMainEntryPoint>true</DisableImplicitMainEntryPoint>
+    <StartupObject>SoloDbManager.EntryPoint</StartupObject>
+  </PropertyGroup>
+
+  <!-- Use the ASP.NET Core shared framework (provides WebApplication, Kestrel,
+       HttpResults, etc.) without pulling the legacy Microsoft.AspNetCore meta-package. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.10" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.10" />
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="wwwroot\**\*" />
+    <Content Remove="wwwroot\**\*" />
+  </ItemGroup>
+
+  <!--
+    Embed the SQLite native library (e_sqlite3.dll) as a managed resource so
+    the published output is a SINGLE executable file with no companion DLL.
+  -->
+  <Target Name="EmbedSQLiteNativeLib" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <NuGetRoot>$(NuGetPackageRoot)</NuGetRoot>
+      <NuGetRoot Condition="'$(NuGetRoot)' == '' OR '$(NuGetRoot)' == '*Undefined*'">$(HOME)/.nuget/packages/</NuGetRoot>
+      <PkgSqliteNativeDir>$(NuGetRoot)sqlitepclraw.lib.e_sqlite3/</PkgSqliteNativeDir>
+      <TargetRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</TargetRid>
+      <TargetRid Condition="'$(TargetRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</TargetRid>
+    </PropertyGroup>
+    <ItemGroup>
+      <SQLiteNativeFile Include="$(PkgSqliteNativeDir)**/runtimes/$(TargetRid)/native/*" />
+    </ItemGroup>
+    <Message Text="DEBUG embed: TargetRid=$(TargetRid) found=@(SQLiteNativeFile, '; ')" Importance="high" />
+    <ItemGroup Condition="'@(SQLiteNativeFile)' != ''">
+      <EmbeddedResource Include="@(SQLiteNativeFile)" LogicalName="sqlite_native_lib" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Remove the companion native DLL from publish output (embedded as resource). -->
+  <Target Name="RemoveCompanionNativeLib" AfterTargets="Publish">
+    <ItemGroup>
+      <CompanionNativeLib Include="$(PublishDir)libe_sqlite3.so" />
+      <CompanionNativeLib Include="$(PublishDir)libe_sqlite3.dylib" />
+      <CompanionNativeLib Include="$(PublishDir)e_sqlite3.dll" />
+    </ItemGroup>
+    <Delete Files="@(CompanionNativeLib)" />
+  </Target>
+
+</Project>

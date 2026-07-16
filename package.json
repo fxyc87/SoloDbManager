@@ -1,0 +1,8 @@
+{
+  "name": "solodb-manager",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "dotnet publish solodb-csharp/SoloDbManager.csproj -c Release -r win-x64 -o dist-win"
+  }
+}
